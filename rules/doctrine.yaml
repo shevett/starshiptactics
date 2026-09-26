@@ -1,0 +1,9 @@
+# Initial deterministic doctrine rules.
+doctrine:
+  defensive_orientation:
+    prefer_strongest_field_toward_dominant_incoming_threat: true
+    allow_weapon_geometry_tradeoff: true
+
+  engagement:
+    concentrate_fire: true
+    maintain_formation_by_default: true

@@ -1,0 +1,226 @@
+# Solar System static environment definition
+# Epoch-independent: scenarios choose or randomize orbital phase / true anomaly.
+# Units:
+#   mass_kg: kilograms
+#   radius_km: mean radius in kilometers
+#   mu_km3_s2: standard gravitational parameter, km^3/s^2
+#   semi_major_axis_km: orbital semi-major axis, kilometers
+#   orbital_period_days: sidereal orbital period, Earth days
+#
+# This is intentionally a major-body simulation set, not a catalog of every
+# known minor planet or moon. Additional bodies can be added using the same schema.
+
+system:
+  id: solar_system
+  name: Solar System
+  coordinate_frame: heliocentric_ecliptic_J2000
+  position_policy: scenario_defined_or_randomized_phase
+  gravity_model:
+    type: n_body
+    include_all_defined_bodies: true
+    softening_km: 0.0
+
+bodies:
+  sun:
+    type: star
+    parent: null
+    mass_kg: 1.98847e30
+    radius_km: 695700
+    mu_km3_s2: 1.32712440018e11
+
+  mercury:
+    type: planet
+    parent: sun
+    mass_kg: 3.3011e23
+    radius_km: 2439.7
+    mu_km3_s2: 22031.86855
+    orbit: {semi_major_axis_km: 57909050, eccentricity: 0.20563, inclination_deg: 7.005, orbital_period_days: 87.969}
+
+  venus:
+    type: planet
+    parent: sun
+    mass_kg: 4.8675e24
+    radius_km: 6051.8
+    mu_km3_s2: 324858.592
+    orbit: {semi_major_axis_km: 108208000, eccentricity: 0.006772, inclination_deg: 3.3946, orbital_period_days: 224.701}
+
+  earth:
+    type: planet
+    parent: sun
+    mass_kg: 5.97237e24
+    radius_km: 6371.0
+    mu_km3_s2: 398600.435436
+    orbit: {semi_major_axis_km: 149598023, eccentricity: 0.0167086, inclination_deg: 0.00005, orbital_period_days: 365.256}
+
+  moon:
+    type: moon
+    parent: earth
+    mass_kg: 7.342e22
+    radius_km: 1737.4
+    mu_km3_s2: 4902.800066
+    orbit: {semi_major_axis_km: 384400, eccentricity: 0.0549, inclination_deg: 5.145, orbital_period_days: 27.321661}
+
+  mars:
+    type: planet
+    parent: sun
+    mass_kg: 6.4171e23
+    radius_km: 3389.5
+    mu_km3_s2: 42828.375214
+    orbit: {semi_major_axis_km: 227939200, eccentricity: 0.0934, inclination_deg: 1.850, orbital_period_days: 686.980}
+
+  phobos:
+    type: moon
+    parent: mars
+    mass_kg: 1.0659e16
+    radius_km: 11.2667
+    mu_km3_s2: 0.0007112
+    orbit: {semi_major_axis_km: 9376, eccentricity: 0.0151, inclination_deg: 1.093, orbital_period_days: 0.31891}
+
+  deimos:
+    type: moon
+    parent: mars
+    mass_kg: 1.4762e15
+    radius_km: 6.2
+    mu_km3_s2: 0.0000985
+    orbit: {semi_major_axis_km: 23463, eccentricity: 0.0002, inclination_deg: 0.93, orbital_period_days: 1.26244}
+
+  jupiter:
+    type: planet
+    parent: sun
+    mass_kg: 1.8982e27
+    radius_km: 69911
+    mu_km3_s2: 1.266865349e8
+    orbit: {semi_major_axis_km: 778570000, eccentricity: 0.0489, inclination_deg: 1.303, orbital_period_days: 4332.59}
+
+  io:
+    type: moon
+    parent: jupiter
+    mass_kg: 8.9319e22
+    radius_km: 1821.6
+    mu_km3_s2: 5959.916
+    orbit: {semi_major_axis_km: 421700, eccentricity: 0.0041, orbital_period_days: 1.769}
+
+  europa:
+    type: moon
+    parent: jupiter
+    mass_kg: 4.7998e22
+    radius_km: 1560.8
+    mu_km3_s2: 3202.739
+    orbit: {semi_major_axis_km: 671034, eccentricity: 0.0094, orbital_period_days: 3.551}
+
+  ganymede:
+    type: moon
+    parent: jupiter
+    mass_kg: 1.4819e23
+    radius_km: 2634.1
+    mu_km3_s2: 9887.834
+    orbit: {semi_major_axis_km: 1070412, eccentricity: 0.0013, orbital_period_days: 7.155}
+
+  callisto:
+    type: moon
+    parent: jupiter
+    mass_kg: 1.0759e23
+    radius_km: 2410.3
+    mu_km3_s2: 7179.289
+    orbit: {semi_major_axis_km: 1882709, eccentricity: 0.0074, orbital_period_days: 16.689}
+
+  saturn:
+    type: planet
+    parent: sun
+    mass_kg: 5.6834e26
+    radius_km: 58232
+    mu_km3_s2: 3.7931187e7
+    orbit: {semi_major_axis_km: 1433530000, eccentricity: 0.0565, inclination_deg: 2.485, orbital_period_days: 10759.22}
+
+  titan:
+    type: moon
+    parent: saturn
+    mass_kg: 1.3452e23
+    radius_km: 2574.7
+    mu_km3_s2: 8978.14
+    orbit: {semi_major_axis_km: 1221870, orbital_period_days: 15.945}
+
+  uranus:
+    type: planet
+    parent: sun
+    mass_kg: 8.6810e25
+    radius_km: 25362
+    mu_km3_s2: 5.793939e6
+    orbit: {semi_major_axis_km: 2872460000, eccentricity: 0.0457, inclination_deg: 0.772, orbital_period_days: 30688.5}
+
+  neptune:
+    type: planet
+    parent: sun
+    mass_kg: 1.02413e26
+    radius_km: 24622
+    mu_km3_s2: 6.836529e6
+    orbit: {semi_major_axis_km: 4495060000, eccentricity: 0.0113, inclination_deg: 1.770, orbital_period_days: 60182}
+
+  triton:
+    type: moon
+    parent: neptune
+    mass_kg: 2.14e22
+    radius_km: 1353.4
+    mu_km3_s2: 1427.6
+    orbit: {semi_major_axis_km: 354759, eccentricity: 0.000016, inclination_deg: 156.865, orbital_period_days: -5.877}
+
+  ceres:
+    type: dwarf_planet
+    parent: sun
+    mass_kg: 9.3835e20
+    radius_km: 469.7
+    mu_km3_s2: 62.63
+    orbit: {semi_major_axis_km: 413690000, eccentricity: 0.0758, inclination_deg: 10.593, orbital_period_days: 1680.5}
+
+  pluto:
+    type: dwarf_planet
+    parent: sun
+    mass_kg: 1.303e22
+    radius_km: 1188.3
+    mu_km3_s2: 869.61
+    orbit: {semi_major_axis_km: 5906380000, eccentricity: 0.2488, inclination_deg: 17.16, orbital_period_days: 90560}
+
+  charon:
+    type: moon
+    parent: pluto
+    mass_kg: 1.586e21
+    radius_km: 606.0
+    mu_km3_s2: 105.88
+    orbit: {semi_major_axis_km: 19596, orbital_period_days: 6.387}
+
+  eris:
+    type: dwarf_planet
+    parent: sun
+    mass_kg: 1.6466e22
+    radius_km: 1163
+    mu_km3_s2: 1108
+    orbit: {semi_major_axis_km: 10152000000, eccentricity: 0.4407, inclination_deg: 44.04, orbital_period_days: 203830}
+
+  vesta:
+    type: asteroid
+    parent: sun
+    mass_kg: 2.59076e20
+    radius_km: 262.7
+    mu_km3_s2: 17.29
+    orbit: {semi_major_axis_km: 353300000, eccentricity: 0.089, inclination_deg: 7.14, orbital_period_days: 1325.9}
+
+  pallas:
+    type: asteroid
+    parent: sun
+    mass_kg: 2.04e20
+    radius_km: 256
+    mu_km3_s2: 13.6
+    orbit: {semi_major_axis_km: 414500000, eccentricity: 0.231, inclination_deg: 34.84, orbital_period_days: 1686}
+
+  hygiea:
+    type: asteroid
+    parent: sun
+    mass_kg: 8.67e19
+    radius_km: 216
+    mu_km3_s2: 5.79
+    orbit: {semi_major_axis_km: 470300000, eccentricity: 0.112, inclination_deg: 3.83, orbital_period_days: 2033}
+
+simulation_defaults:
+  phase_strategy: random
+  include_gravity_from_types: [star, planet, moon, dwarf_planet, asteroid]
+  gravity_acceleration_cutoff_m_s2: 0.0

@@ -1,0 +1,48 @@
+# Reusable ship classes.
+# Values below are placeholders intended to demonstrate schema only.
+
+classes:
+  battlecruiser:
+    role: battlecruiser
+    dimensions:
+      length_m: null
+      beam_m: null
+      height_m: null
+    mass_kg: null
+
+    propulsion:
+      max_acceleration_g: 450
+      primary_thrust_axis: longitudinal
+      reverse_primary_thrust: false
+      lateral_primary_thrust: false
+      rotational_acceleration_deg_s2: null
+
+    defenses:
+      geometry:
+        wedge:
+          dorsal: strong
+          ventral: strong
+        sidewalls:
+          port: weaker
+          starboard: weaker
+        vulnerable_arcs:
+          bow: true
+          stern: true
+
+    sensors: {}
+    communications: {}
+
+    weapons:
+      missile_batteries:
+        - id: main_broadside
+          tubes: 20
+          cycle_time_s: 12
+          compatible_missiles:
+            - standard_nuclear
+            - xray_laser
+          magazine_capacity: 1200
+
+      grasers:
+        - id: broadside_graser
+          count: 8
+          weapon_class: capital_graser

@@ -1,0 +1,38 @@
+# Reusable missile and direct-fire weapon classes.
+
+missiles:
+  standard_nuclear:
+    type: missile
+    acceleration_g: 12000
+    powered_duration_s: 180
+    seeker_range_km: null
+    post_burn_behavior: ballistic
+    warhead:
+      type: nuclear
+      yield: null
+      lethal_radius_km: null
+      damage_radius_km: null
+
+  xray_laser:
+    type: missile
+    acceleration_g: 12000
+    powered_duration_s: 180
+    seeker_range_km: null
+    post_burn_behavior: ballistic
+    warhead:
+      type: xray_laser
+      beam_count: null
+      beam_energy_j: null
+      beam_divergence_rad: null
+      max_effective_range_km: null
+
+energy_weapons:
+  capital_graser:
+    type: graser
+    propagation_speed: c
+    beam_energy_j: null
+    firing_interval_s: null
+    aperture_m: null
+    beam_divergence_rad: null
+    max_effective_range_km: null
+    damage_falloff_model: inverse_area

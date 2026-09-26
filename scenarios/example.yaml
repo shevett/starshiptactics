@@ -1,0 +1,23 @@
+scenario:
+  id: example_engagement
+  system: solar_system
+  orbital_phase_strategy: random
+
+units:
+  - group: red_bc_group
+    faction: red
+    class: battlecruiser
+    count: 5
+    position_km:
+      x: 125000000
+      y: 2000000
+      z: 0
+    velocity_km_s:
+      x: -1200
+      y: 0
+      z: 0
+    orientation:
+      forward_vector: [1, 0, 0]
+    objective:
+      type: transit_to_point
+      destination_km: [0, 0, 0]

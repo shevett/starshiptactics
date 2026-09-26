@@ -1,0 +1,23 @@
+navigation:
+  ship_separation:
+    minimum_km: 100
+
+  station_separation:
+    minimum_km: 250
+
+  celestial_exclusion:
+    planet_surface_clearance_km: 1000
+    moon_surface_clearance_km: 500
+    star_surface_clearance_km: 1000000
+
+  collision_avoidance:
+    enabled: true
+    prediction_window_s: 600
+    avoidance_precedence: true
+
+  propulsion:
+    enforce_primary_thrust_axis: true
+    require_orientation_before_primary_thrust_change: true
+
+  formation:
+    preserve_minimum_separation: true
