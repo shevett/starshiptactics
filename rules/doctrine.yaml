@@ -7,3 +7,11 @@ doctrine:
   engagement:
     concentrate_fire: true
     maintain_formation_by_default: true
+
+    # PLACEHOLDER tuning values for fire_at_will (engineering defaults, not canon; see docs/OPEN_QUESTIONS.md)
+    salvo_size: 10                 # missiles per battery per salvo (capped by tubes and magazine)
+    salvo_interval_s: 30           # minimum time between salvos from one battery (also >= battery cycle time)
+    fire_range_fraction: 0.8       # fire when a hostile track is inside this fraction of the missile's powered reach
+    ballistic_expiry_s: 120        # a missile that has burned out is removed this long after burnout if unspent
+    max_missiles_in_flight_per_target: 20   # hold fire on a target while this many of the faction's missiles are already aimed at it
+    assumed_dead_integrity: 0.05   # stop targeting ships at or below this integrity (assumes perfect, instant battle damage assessment)

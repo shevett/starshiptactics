@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starship Tactics Plot</title>
+<style>
+  :root {
+    --bg: #05090d; --panel: #0a1218; --line: #17303a; --grid: #0e1d25; --text: #9fd3c7; --dim: #5f8a86;
+    --hi: #d7fff4; --red: #ff5a4f; --blue: #4aa8ff; --other: #d9d36a; --warn: #ffb547;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+  body { display: grid; grid-template-columns: 1fr 300px; grid-template-rows: 34px 1fr 74px; grid-template-areas: "top top" "plot side" "ctl side"; height: 100vh; }
+  header { grid-area: top; display: flex; align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header b { color: var(--hi); letter-spacing: .08em; }
+  #clock { margin-left: auto; color: var(--hi); font-size: 14px; }
+  #plot { grid-area: plot; position: relative; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tip { position: absolute; right: 10px; top: 6px; color: var(--dim); pointer-events: none; opacity: .7; text-align: right; }
+  #controls { grid-area: ctl; border-top: 1px solid var(--line); background: var(--panel); padding: 6px 12px; display: flex; flex-direction: column; gap: 6px; }
+  #controls .row { display: flex; align-items: center; gap: 8px; }
+  #scrub { flex: 1; accent-color: var(--hi); }
+  #strip { width: 100%; height: 14px; display: block; }
+  aside { grid-area: side; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 12px; }
+  h3 { margin: 0 0 4px; font-size: 11px; letter-spacing: .1em; color: var(--dim); font-weight: 600; text-transform: uppercase; }
+  button, select { background: #0f1e26; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { border-color: var(--dim); }
+  button.on { background: #15343d; color: var(--hi); border-color: var(--dim); }
+  label { display: flex; align-items: center; gap: 6px; padding: 1px 0; cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--hi); }
+  #info div { display: flex; justify-content: space-between; gap: 8px; }
+  #info span:first-child { color: var(--dim); }
+  #events { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); }
+  #events div { padding: 2px 6px; cursor: pointer; border-bottom: 1px solid var(--grid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #events div:hover { background: #10242c; }
+  .t-avoid { color: var(--warn); } .t-done { color: #7bf0a5; } .t-cmd { color: var(--text); }
+  #load { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--bg); z-index: 3; text-align: center; padding: 20px; }
+  #load.hidden { display: none; }
+  #load p { max-width: 520px; color: var(--dim); line-height: 1.5; margin: 0; }
+  #drop { border: 1px dashed var(--dim); padding: 24px 40px; border-radius: 6px; }
+  #drop.over { background: #10242c; }
+  .err { color: var(--warn); }
+  @media (max-width: 800px) { body { grid-template-columns: 1fr; grid-template-rows: 34px 55vh 74px auto; grid-template-areas: "top" "plot" "ctl" "side"; height: auto; min-height: 100vh; } }
+</style>
+</head>
+<body>
+<header><b>STARSHIP TACTICS</b><span id="scn">no run loaded</span><span id="clock">T+00:00:00</span></header>
+
+<div id="plot">
+  <canvas id="cv"></canvas>
+  <div id="tip">drag: pan · wheel: zoom · click: select · space: play/pause · ←/→: step</div>
+  <div id="load">
+    <div id="drop">
+      <b>Load a simulation run</b><br><br>
+      <input id="files" type="file" multiple accept=".jsonl,.json"><br><br>
+      Select <code>state.jsonl</code>, <code>events.jsonl</code> and <code>metadata.json</code> together, or drop them here.
+    </div>
+    <p id="loadmsg">Or serve the repo (<code>python -m simulator serve --run output/example_engagement</code>) to load a run automatically with <code>?run=</code>.</p>
+  </div>
+</div>
+
+<div id="controls">
+  <div class="row">
+    <button id="play">▶ Play</button>
+    <button id="back10" title="back 10 s">⏪</button>
+    <button id="fwd10" title="forward 10 s">⏩</button>
+    <select id="speed" title="playback speed (sim seconds per real second)"></select>
+    <input id="scrub" type="range" min="0" max="1000" value="0">
+    <span id="tmax">/ 0</span>
+  </div>
+  <canvas id="strip"></canvas>
+</div>
+
+<aside>
+  <section>
+    <h3>View</h3>
+    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+      <select id="follow" title="centre on"></select>
+      <button id="fitShips">Fit ships</button>
+      <button id="fitSys">Fit system</button>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Perspective
+      <select id="persp"></select>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Vector horizon
+      <select id="horizon"></select>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Trail
+      <select id="trail"></select>
+    </div>
+    <label><input type="checkbox" id="oLabels" checked> labels</label>
+    <label><input type="checkbox" id="oVel" checked> velocity vectors / projected path</label>
+    <label><input type="checkbox" id="oAcc"> acceleration vectors</label>
+    <label><input type="checkbox" id="oTrails" checked> trails</label>
+    <label><input type="checkbox" id="oBodies" checked> celestial bodies</label>
+    <label><input type="checkbox" id="oRings" checked> range rings on selected</label>
+    <label><input type="checkbox" id="oSep" checked> minimum-separation circles</label>
+    <label><input type="checkbox" id="oExcl" checked> celestial exclusion zones</label>
+    <label><input type="checkbox" id="oEnv" checked> missile envelope &amp; hyper limit</label>
+    <label><input type="checkbox" id="oGrid" checked> grid</label>
+    <label><input type="checkbox" id="oTruth"> truth ghosts in faction view</label>
+  </section>
+  <section>
+    <h3>Selected</h3>
+    <div id="info"><div><span>click an object</span><span></span></div></div>
+  </section>
+  <section>
+    <h3>Events <span id="evcount"></span></h3>
+    <label><input type="checkbox" id="evSensor"> include sensor observations</label>
+    <label><input type="checkbox" id="evMissile"> include launches / burnouts / expiries</label>
+    <div id="events"></div>
+  </section>
+</aside>
+
+<script>
+"use strict";
+const C = 299792458, AU = 1.495978707e11;
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d"), strip = $("strip"), sctx = strip.getContext("2d");
+let D = null;                      // loaded run
+const V = { cx: 0, cy: 0, scale: 1e9, follow: "sun", selected: null };   // scale = metres per pixel
+const P = { t: 0, playing: false, speed: 60 };
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+// ---------------------------------------------------------------- loading
+function parseJsonl(text) {
+  const out = []; let i = 0;
+  while (i < text.length) {
+    let j = text.indexOf("\n", i); if (j < 0) j = text.length;
+    if (j > i) out.push(JSON.parse(text.slice(i, j)));
+    i = j + 1;
+  }
+  return out;
+}
+async function loadFromUrl(run) {
+  const base = new URL("../" + run.replace(/\/$/, "") + "/", location.href);
+  setMsg("loading " + base.pathname + " …");
+  const [meta, state, events] = await Promise.all(
+    ["metadata.json", "state.jsonl", "events.jsonl"].map(f => fetch(new URL(f, base)).then(r => { if (!r.ok) throw new Error(f + ": HTTP " + r.status); return r.text(); })));
+  const missiles = await fetch(new URL("missiles.jsonl", base)).then(r => r.ok ? r.text() : "").catch(() => "");   // optional
+  init(JSON.parse(meta), parseJsonl(state), parseJsonl(events), parseJsonl(missiles));
+}
+async function loadFromFiles(list) {
+  const by = {};
+  for (const f of list) by[f.name] = f;
+  const need = ["metadata.json", "state.jsonl", "events.jsonl"];
+  const missing = need.filter(n => !by[n]);
+  if (missing.length) { setMsg("missing: " + missing.join(", "), true); return; }
+  setMsg("parsing …");
+  const [m, s, e] = await Promise.all(need.map(n => by[n].text()));
+  const ms = by["missiles.jsonl"] ? await by["missiles.jsonl"].text() : "";
+  init(JSON.parse(m), parseJsonl(s), parseJsonl(e), parseJsonl(ms));
+}
+function setMsg(m, err) { $("loadmsg").textContent = m; $("loadmsg").className = err ? "err" : ""; }
+$("files").onchange = e => loadFromFiles([...e.target.files]).catch(x => setMsg(String(x), true));
+const drop = $("drop");
+["dragenter", "dragover"].forEach(ev => addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+addEventListener("drop", e => loadFromFiles([...e.dataTransfer.files]).catch(x => setMsg(String(x), true)));
+
+// ---------------------------------------------------------------- data model
+function init(meta, rows, events, missileRows) {
+  if (!rows.length) { setMsg("state.jsonl is empty", true); return; }
+  const n = rows.length, ids = rows[0].objects.map(o => o.id);
+  const info = {}; for (const o of meta.objects) info[o.id] = o;
+  const objs = ids.map((id, oi) => {
+    const o = { id, kind: rows[0].objects[oi].kind, meta: info[id] || {}, pos: new Float64Array(3 * n), vel: new Float64Array(3 * n),
+      acc: new Float64Array(3 * n), q: new Float64Array(4 * n), integ: new Float32Array(n).fill(1) };
+    return o;
+  });
+  rows.forEach((r, k) => r.objects.forEach((s, oi) => {
+    if (s.id !== ids[oi]) throw new Error("object order changed at row " + k);
+    const o = objs[oi];
+    o.pos.set(s.position_m, 3 * k); o.vel.set(s.velocity_m_s, 3 * k);
+    if (s.acceleration_m_s2) o.acc.set(s.acceleration_m_s2, 3 * k);
+    if (s.orientation_xyzw) o.q.set(s.orientation_xyzw, 4 * k);
+    if (s.integrity !== undefined) o.integ[k] = s.integrity;
+  }));
+  const t = Float64Array.from(rows.map(r => r.t));
+  const tracks = rows.map(r => r.tracks || null);
+  D = { meta, n, t, objs, byId: Object.fromEntries(objs.map(o => [o.id, o])), tracks, events,
+        mrows: missileRows || [], ships: objs.filter(o => o.kind === "ship"), bodies: objs.filter(o => o.kind === "body"),
+        tEnd: t[n - 1], trailCache: {} };
+  D.groups = {}; for (const s of D.ships) (D.groups[s.meta.group] = D.groups[s.meta.group] || []).push(s);
+  $("scn").textContent = `${meta.scenario_id} · seed ${meta.random_seed} · ${D.ships.length} ships · ${meta.warnings.length} config warning(s)`;
+  buildControls(); buildEvents(); $("load").classList.add("hidden");
+  P.t = 0; fitShips(); resize();
+  const orb = meta.orbits || [];
+  if (orb.length) {        // orbit scenarios: open in the frame of the body so the orbits are visible
+    const body = orb[0].body, rmax = Math.max(...orb.filter(x => x.body === body).map(x => x.radius_m));
+    V.follow = "o:" + body; $("follow").value = V.follow;
+    V.scale = 2.7 * rmax / Math.min(cv.clientWidth, cv.clientHeight);
+  }
+  requestAnimationFrame(frame);
+}
+
+function rowIndex(t) {           // last row with t[k] <= t
+  let lo = 0, hi = D.n - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (D.t[mid] <= t) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+// cubic Hermite between snapshots using stored velocities (ships accelerate hard, so plain lerp would cut corners)
+function stateAt(o, t) {
+  const k = rowIndex(t), k2 = Math.min(k + 1, D.n - 1);
+  const t0 = D.t[k], h = D.t[k2] - t0, s = h > 0 ? (t - t0) / h : 0;
+  const s2 = s * s, s3 = s2 * s;
+  const h00 = 2 * s3 - 3 * s2 + 1, h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+  const p = [0, 0, 0], v = [0, 0, 0], a = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    p[i] = h00 * o.pos[3 * k + i] + h10 * h * o.vel[3 * k + i] + h01 * o.pos[3 * k2 + i] + h11 * h * o.vel[3 * k2 + i];
+    v[i] = o.vel[3 * k + i] * (1 - s) + o.vel[3 * k2 + i] * s;
+    a[i] = o.acc[3 * k + i] * (1 - s) + o.acc[3 * k2 + i] * s;
+  }
+  let fwd = null;
+  if (o.kind === "ship") {
+    const q = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) q[i] = o.q[4 * k + i] * (1 - s) + o.q[4 * k2 + i] * s;
+    const n = Math.hypot(...q) || 1; const [x, y, z, w] = q.map(c => c / n);
+    fwd = [1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)];
+  }
+  return { p, v, a, fwd, integ: o.integ ? o.integ[k] : 1 };
+}
+
+// ---------------------------------------------------------------- UI setup
+const SPEEDS = [1, 10, 60, 300, 1000, 3600, 10000, 36000];
+const HORIZONS = [[10, "10 s"], [60, "1 min"], [600, "10 min"], [3600, "1 h"], [21600, "6 h"]];
+const TRAILS = [[0, "off"], [600, "10 min"], [3600, "1 h"], [21600, "6 h"], [1e12, "all"]];
+function fillSel(sel, items, cur) { sel.innerHTML = ""; for (const [v, l] of items) { const o = document.createElement("option"); o.value = v; o.textContent = l; sel.appendChild(o); } sel.value = cur; }
+function buildControls() {
+  fillSel($("speed"), SPEEDS.map(s => [s, s + "×"]), P.speed);
+  fillSel($("horizon"), HORIZONS, 600);
+  fillSel($("trail"), TRAILS, 1e12);
+  const f = [["free", "Free camera"], ["sun", "Sun"]];
+  for (const g of Object.keys(D.groups)) f.push(["g:" + g, "group " + g]);
+  for (const s of D.ships) f.push(["o:" + s.id, s.id]);
+  for (const b of D.bodies) if (b.id !== "sun") f.push(["o:" + b.id, b.id]);
+  fillSel($("follow"), f, V.follow);
+  fillSel($("persp"), [["truth", "Truth (omniscient)"], ...D.meta.factions.map(x => [x, "Faction " + x + " (delayed tracks)"])], "truth");
+  $("tmax").textContent = "/ " + fmtClock(D.tEnd);
+  $("scrub").max = D.tEnd; $("scrub").step = "any";
+}
+function fmtClock(t) { t = Math.max(0, Math.round(t)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60; return `T+${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`; }
+function fmtDist(m) {
+  const a = Math.abs(m);
+  if (a < 1e3) return m.toFixed(0) + " m";
+  if (a < 1e7) return (m / 1e3).toLocaleString(undefined, { maximumFractionDigits: a < 1e5 ? 1 : 0 }) + " km";
+  if (a < 1e10) return (m / 1e9).toFixed(2) + " Mkm";
+  return (m / AU).toFixed(3) + " AU";
+}
+function fmtVel(v) { const a = Math.hypot(...v); return a < 1e3 ? a.toFixed(1) + " m/s" : (a / 1e3).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " km/s" + (a > 1e6 ? ` (${(a / C * 100).toFixed(2)}% c)` : ""); }
+
+function buildEvents() {
+  const el = $("events"); el.innerHTML = "";
+  const showSensor = $("evSensor").checked;
+  let shown = 0;
+  for (const e of D.events) {
+    if (!showSensor && e.type.startsWith("sensor_")) continue;
+    if (!$("evMissile").checked && (e.type === "missile_launch" || e.type === "missile_burnout" || e.type === "missile_expired")) continue;
+    const d = document.createElement("div");
+    const cls = e.type === "avoidance_maneuver" || e.type === "detonation" ? "t-avoid" : e.type === "objective_complete" ? "t-done" : "t-cmd";
+    d.className = cls;
+    let detail = e.data.mode || e.data.reason || e.data.objective || "";
+    if (e.type === "detonation") detail = `on ${e.data.target_id} at ${fmtDist(e.data.range_m)} · damage ${(e.data.damage * 100).toFixed(1)}% → integrity ${e.data.integrity_after.toFixed(3)}`;
+    if (e.type === "missile_launch") detail = `→ ${e.data.target_id}`;
+    d.textContent = `${fmtClock(e.t)} ${e.actor_id.replace(/^.*_group-/, "#")} ${e.type.replace("_maneuver", "").replace("_command", "")} ${detail}`;
+    d.title = JSON.stringify(e.data);
+    d.onclick = () => { seek(e.t - (e.type === "detonation" ? 0 : 0)); if (D.byId[e.actor_id]) { V.selected = e.actor_id; } };
+    el.appendChild(d); if (++shown > 1500) break;
+  }
+  $("evcount").textContent = `(${D.events.length})`;
+}
+$("evSensor").onchange = () => D && buildEvents();
+$("evMissile").onchange = () => D && buildEvents();
+
+function seek(t) { P.t = Math.min(Math.max(0, t), D.tEnd); $("scrub").value = P.t; }
+$("play").onclick = () => { if (!D) return; if (P.t >= D.tEnd) seek(0); P.playing = !P.playing; };
+$("back10").onclick = () => D && seek(P.t - 10);
+$("fwd10").onclick = () => D && seek(P.t + 10);
+$("speed").onchange = e => P.speed = +e.target.value;
+$("scrub").oninput = e => { P.t = +e.target.value; };
+$("follow").onchange = e => { V.follow = e.target.value; };
+$("fitShips").onclick = () => fitShips();
+$("fitSys").onclick = () => fitSystem();
+addEventListener("keydown", e => {
+  if (!D || e.target.tagName === "SELECT") return;
+  if (e.code === "Space") { e.preventDefault(); $("play").click(); }
+  if (e.code === "ArrowRight") seek(P.t + (e.shiftKey ? 600 : 10));
+  if (e.code === "ArrowLeft") seek(P.t - (e.shiftKey ? 600 : 10));
+});
+
+// ---------------------------------------------------------------- view geometry
+function followPos(t) {
+  const f = V.follow;
+  if (f === "sun") return [0, 0];
+  if (f.startsWith("g:")) { const g = D.groups[f.slice(2)]; let x = 0, y = 0; for (const s of g) { const p = stateAt(s, t).p; x += p[0]; y += p[1]; } return [x / g.length, y / g.length]; }
+  const p = stateAt(D.byId[f.slice(2)], t).p; return [p[0], p[1]];
+}
+// Motion is drawn relative to the followed object/group, so a ship orbiting a moving planet traces its orbit
+// instead of a long line that keeps pace with the planet. "free" and "sun" are the inertial frame.
+function frameRows() {
+  const key = V.follow;
+  if (D.frameKey === key) return D.frame;
+  D.frameKey = key; D.frame = null;
+  if (key === "free" || key === "sun") return null;
+  const f = new Float64Array(2 * D.n);
+  const src = key.startsWith("g:") ? D.groups[key.slice(2)] : [D.byId[key.slice(2)]];
+  for (let k = 0; k < D.n; k++) {
+    let x = 0, y = 0; for (const o of src) { x += o.pos[3 * k]; y += o.pos[3 * k + 1]; }
+    f[2 * k] = x / src.length; f[2 * k + 1] = y / src.length;
+  }
+  return D.frame = f;
+}
+function frameVel(t) {
+  const key = V.follow; if (key === "free" || key === "sun") return [0, 0, 0];
+  const src = key.startsWith("g:") ? D.groups[key.slice(2)] : [D.byId[key.slice(2)]];
+  const v = [0, 0, 0]; for (const o of src) { const s = stateAt(o, t).v; for (let i = 0; i < 3; i++) v[i] += s[i] / src.length; }
+  return v;
+}
+function fitShips() {
+  // frame the Sun and every ship at the current time, then leave the camera free
+  fitPoints([[0, 0], ...D.ships.map(s => stateAt(s, P.t).p)]);
+}
+function fitSystem() {
+  V.follow = "sun"; $("follow").value = "sun";
+  let r = 0; for (const b of D.bodies) r = Math.max(r, Math.hypot(...stateAt(b, P.t).p));
+  for (const s of D.ships) r = Math.max(r, Math.hypot(...stateAt(s, P.t).p));
+  V.scale = r * 2.2 / Math.min(cv.clientWidth, cv.clientHeight);
+}
+function fitPoints(pts) {
+  let xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 2e5);
+  V.scale = span * 1.5 / Math.min(cv.clientWidth, cv.clientHeight);
+  V.follow = "free"; $("follow").value = "free"; V.cx = cx; V.cy = cy;
+}
+const toScr = (x, y) => [cv.clientWidth / 2 + (x - V.cx) / V.scale, cv.clientHeight / 2 - (y - V.cy) / V.scale];
+
+let drag = null;
+cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, cx: V.cx, cy: V.cy, moved: false }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+  if (drag.moved) { V.follow = "free"; $("follow").value = "free"; V.cx = drag.cx - dx * V.scale; V.cy = drag.cy + dy * V.scale; }
+});
+cv.addEventListener("pointerup", e => { if (drag && !drag.moved) pick(e.offsetX, e.offsetY); drag = null; });
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const k = Math.exp(e.deltaY * 0.0015);
+  const wx = V.cx + (e.offsetX - cv.clientWidth / 2) * V.scale, wy = V.cy - (e.offsetY - cv.clientHeight / 2) * V.scale;
+  V.scale *= k;
+  if (V.follow === "free") { V.cx = wx - (e.offsetX - cv.clientWidth / 2) * V.scale; V.cy = wy + (e.offsetY - cv.clientHeight / 2) * V.scale; }
+}, { passive: false });
+function pick(px, py) {
+  let best = null, bd = 12;
+  for (const o of [...D.ships, ...D.bodies]) {
+    const p = stateAt(o, P.t).p, [sx, sy] = toScr(p[0], p[1]);
+    const d = Math.hypot(sx - px, sy - py);
+    if (d < bd) { bd = d; best = o.id; }
+  }
+  V.selected = best;
+}
+
+// ---------------------------------------------------------------- drawing
+function niceStep(target) { const p = Math.pow(10, Math.floor(Math.log10(target))); const m = target / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+function factionColor(f) { return f === "red" ? css("--red") : f === "blue" ? css("--blue") : css("--other"); }
+const BODY_COL = { star: "#ffd76a", planet: "#7fb8d6", moon: "#8a9aa3", dwarf_planet: "#a48fbf", asteroid: "#7d7466" };
+
+function drawGrid(W, H) {
+  const step = niceStep(V.scale * 110), gl = m => step < 1e9 ? (m / 1e3).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " km"
+      : step < 1e10 ? (m / 1e9).toFixed(step < 1e9 * 10 ? 1 : 0) + " Mkm"
+      : (m / AU).toFixed(Math.max(1, Math.ceil(-Math.log10(step / AU)) + 1)) + " AU", x0 = V.cx - W / 2 * V.scale, x1 = V.cx + W / 2 * V.scale, y0 = V.cy - H / 2 * V.scale, y1 = V.cy + H / 2 * V.scale;
+  ctx.strokeStyle = css("--grid"); ctx.lineWidth = 1; ctx.fillStyle = css("--dim"); ctx.font = "10px ui-monospace, monospace";
+  ctx.beginPath();
+  for (let x = Math.ceil(x0 / step) * step; x < x1; x += step) { const [sx] = toScr(x, 0); ctx.moveTo(sx + .5, 0); ctx.lineTo(sx + .5, H); }
+  for (let y = Math.ceil(y0 / step) * step; y < y1; y += step) { const [, sy] = toScr(0, y); ctx.moveTo(0, sy + .5); ctx.lineTo(W, sy + .5); }
+  ctx.stroke();
+  for (let x = Math.ceil(x0 / step) * step; x < x1; x += step) { const [sx] = toScr(x, 0); ctx.fillText(gl(x), sx + 3, H - 4); }
+  for (let y = Math.ceil(y0 / step) * step; y < y1; y += step) { const [, sy] = toScr(0, y); ctx.fillText(gl(y), 3, sy - 3); }
+}
+function glyphShip(x, y, fwd, color, hollow, size) {
+  const ang = fwd ? Math.atan2(-fwd[1], fwd[0]) : 0;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  ctx.beginPath(); ctx.moveTo(size, 0); ctx.lineTo(-size * .7, size * .6); ctx.lineTo(-size * .4, 0); ctx.lineTo(-size * .7, -size * .6); ctx.closePath();
+  if (hollow) { ctx.strokeStyle = color; ctx.setLineDash([3, 2]); ctx.stroke(); } else { ctx.fillStyle = color; ctx.fill(); }
+  ctx.restore(); ctx.setLineDash([]);
+}
+function arrow(x0, y0, x1, y1, color) {
+  ctx.strokeStyle = color; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+}
+function trailPts(o, t, span) {
+  const k = rowIndex(t), t0 = t - span, fr = frameRows(), now = fr ? followPos(t) : null; const pts = [];
+  for (let i = k; i >= 0 && D.t[i] >= t0; i--) {
+    let x = o.pos[3 * i], y = o.pos[3 * i + 1];
+    if (fr) { x += now[0] - fr[2 * i]; y += now[1] - fr[2 * i + 1]; }
+    pts.push([x, y]);
+  }
+  return pts;
+}
+// label on a circle at the point nearest the middle of the view (so it stays readable when the circle is huge)
+function circleLabel(cx, cy, R, text, color) {
+  const mx = cv.clientWidth / 2, my = cv.clientHeight / 2;
+  let dx = mx - cx, dy = my - cy; let d = Math.hypot(dx, dy);
+  if (d < 2) { dx = 0; dy = -1; d = 1; }                 // circle centred on the view: label at the top
+  const px = cx + dx / d * R, py = cy + dy / d * R;
+  if (px < 4 || py < 12 || px > cv.clientWidth - 4 || py > cv.clientHeight - 4) return;
+  ctx.fillStyle = color; ctx.fillText(text, Math.min(px + 6, cv.clientWidth - ctx.measureText(text).width - 6), py - 4);
+}
+
+function draw() {
+  const W = cv.clientWidth, H = cv.clientHeight; const dpr = devicePixelRatio || 1;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = css("--bg"); ctx.fillRect(0, 0, W, H);
+  if (!D) return;
+  if (V.follow !== "free") { const [fx, fy] = followPos(P.t); V.cx = fx; V.cy = fy; }
+  const persp = $("persp").value, showTruth = $("oTruth").checked;
+  const horizon = +$("horizon").value, trailSpan = +$("trail").value;
+  if ($("oGrid").checked) drawGrid(W, H);
+  ctx.font = "11px ui-monospace, monospace";
+
+  // celestial bodies
+  if ($("oBodies").checked) for (const b of D.bodies) {
+    const p = stateAt(b, P.t).p, [sx, sy] = toScr(p[0], p[1]);
+    if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) continue;
+    const rpx = Math.max(b.meta.radius_m / V.scale, b.meta.type === "star" ? 4 : 2);
+    const col = BODY_COL[b.meta.type] || "#999";
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(sx, sy, rpx, 0, 7); ctx.fill();
+    const ex = b.meta.exclusion_radius_m / V.scale;
+    if ($("oExcl").checked && ex > 4 && ex < 4 * Math.max(W, H)) {
+      ctx.strokeStyle = css("--warn") + "66"; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(sx, sy, ex, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+      if ($("oLabels").checked && ex > 30) circleLabel(sx, sy, ex, `${b.id} exclusion zone (${fmtDist(b.meta.exclusion_radius_m)})`, css("--warn") + "aa");
+    }
+    if (b.meta.type === "planet" || b.meta.type === "star") {
+      if ($("oLabels").checked) { ctx.fillStyle = col; ctx.fillText(b.id, sx + rpx + 4, sy + 4); }
+    } else if ($("oLabels").checked && V.scale < 3e6) { ctx.fillStyle = col; ctx.fillText(b.id, sx + rpx + 4, sy + 4); }
+    if (V.selected === b.id) { ctx.strokeStyle = css("--hi"); ctx.beginPath(); ctx.arc(sx, sy, rpx + 5, 0, 7); ctx.stroke(); }
+  }
+
+  // ships
+  const groupDrawn = {}, fv = frameVel(P.t);
+  const sel = V.selected && D.byId[V.selected];
+  const k = rowIndex(P.t);
+  const trk = D.tracks[k];
+  for (const s of D.ships) {
+    const st = stateAt(s, P.t), [sx, sy] = toScr(st.p[0], st.p[1]);
+    const fac = s.meta.faction, col = factionColor(fac), amax = s.meta.max_acceleration_m_s2 || 1;
+    let asGhost = false;
+    if (persp !== "truth" && fac !== persp) asGhost = true;
+    if ($("oTrails").checked && trailSpan > 0 && (!asGhost || showTruth)) {
+      const pts = trailPts(s, P.t, trailSpan); pts.unshift([st.p[0], st.p[1]]);
+      ctx.strokeStyle = col + "66"; ctx.lineWidth = 1; ctx.beginPath();
+      pts.forEach((q, i) => { const [x, y] = toScr(q[0], q[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    }
+    if (asGhost) {
+      // faction perspective: enemy ships are shown only where light says they were
+      const list = trk && trk[persp]; const t = list && list.find(x => x.id === s.id);
+      if (showTruth) { glyphShip(sx, sy, st.fwd, col + "55", false, 6); }
+      if (t) {
+        const age = P.t - t.observed_t, [tx, ty] = toScr(t.position_m[0], t.position_m[1]);
+        glyphShip(tx, ty, null, col, true, 8);
+        if ($("oLabels").checked) { ctx.fillStyle = col; ctx.fillText(`${s.id.replace(/^.*_group-/, "#")} obs ${age.toFixed(1)}s ago`, tx + 10, ty + 4); }
+        if (showTruth) { ctx.strokeStyle = col + "44"; ctx.setLineDash([2, 3]); arrow(tx, ty, sx, sy, col + "44"); ctx.setLineDash([]); }
+      }
+      continue;
+    }
+    if ($("oVel").checked) {
+      const vr = [st.v[0] - fv[0], st.v[1] - fv[1]];       // velocity relative to the followed frame
+      const L = Math.hypot(...vr) * horizon / V.scale;
+      if (L > 3) { ctx.setLineDash([4, 3]); arrow(sx, sy, sx + vr[0] * horizon / V.scale, sy - vr[1] * horizon / V.scale, col + "aa"); ctx.setLineDash([]); }
+    }
+    if ($("oAcc").checked) {
+      const a = Math.hypot(...st.a), len = 46 * Math.min(1, a / amax);
+      if (len > 1) arrow(sx, sy, sx + st.a[0] / a * len, sy - st.a[1] / a * len, css("--warn"));
+    }
+    if ($("oSep").checked && D.meta.min_ship_separation_m) {
+      const r = D.meta.min_ship_separation_m / 2 / V.scale;
+      if (r > 3) { ctx.strokeStyle = col + "55"; ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke(); }
+      if (r > 14 && V.selected === s.id && $("oLabels").checked) { ctx.fillStyle = col + "aa"; ctx.fillText(`min separation ${fmtDist(D.meta.min_ship_separation_m)}`, sx + r * 0.71 + 3, sy + r * 0.71 + 10); }
+    }
+    ctx.globalAlpha = 0.3 + 0.7 * st.integ;                   // damaged ships fade
+    glyphShip(sx, sy, st.fwd, col, false, 7);
+    ctx.globalAlpha = 1;
+    if (V.selected === s.id) { ctx.strokeStyle = css("--hi"); ctx.beginPath(); ctx.arc(sx, sy, 12, 0, 7); ctx.stroke(); }
+    if ($("oLabels").checked) {
+      const g = s.meta.group; ctx.fillStyle = col;
+      const spread = V.scale < 2e4;    // when zoomed in show each ship; otherwise one label per group
+      const dmg = st.integ < 0.9995 ? ` ▮${st.integ.toFixed(2)}` : "";
+      if (spread) ctx.fillText(s.id.replace(/^.*_group-/, g + " #") + dmg, sx + 10, sy + 4);
+      else if (!groupDrawn[g]) { groupDrawn[g] = 1; ctx.fillText(`${g} ×${D.groups[g].length}`, sx + 10, sy - 8); }
+    }
+  }
+
+  // range rings on selected object
+  if (sel && $("oRings").checked) {
+    const st = stateAt(sel, P.t), [sx, sy] = toScr(st.p[0], st.p[1]);
+    ctx.strokeStyle = css("--dim"); ctx.fillStyle = css("--dim"); ctx.setLineDash([2, 4]);
+    const rings = []; for (let ls = 1e-3; ls <= 1e4; ls *= 10) rings.push(ls);        // light-second rings
+    for (const ls of rings) {
+      const r = ls * C / V.scale; if (r < 25 || r > Math.max(W, H) * 1.5) continue;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke();
+      ctx.fillText(`${ls >= 1 ? ls : ls * 1000 + " ms"}${ls >= 1 ? " light-s" : ""} (${fmtDist(ls * C)})`, sx + r * 0.71 + 3, sy - r * 0.71);
+    }
+    ctx.setLineDash([]);
+  }
+  if ($("oEnv").checked) {
+    // missile envelope of the selected ship: powered reach 1/2 a t^2 from the configured missile class
+    const env = sel && sel.kind === "ship" && sel.meta.missile_envelope;
+    if (env) {
+      const st = stateAt(sel, P.t), [sx, sy] = toScr(st.p[0], st.p[1]), r = env.powered_range_m / V.scale;
+      if (r > 6 && r < 20 * Math.max(W, H)) {
+        ctx.strokeStyle = css("--warn"); ctx.setLineDash([8, 4]); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+        circleLabel(sx, sy, r, `MISSILE ENVELOPE · powered reach ${fmtDist(env.powered_range_m)} (${env.missile}, ${env.acceleration_g.toLocaleString()} g × ${env.powered_duration_s} s; burnout ${(env.burnout_speed_m_s / C * 100).toFixed(1)}% c)`, css("--warn"));
+      }
+    }
+    const hl = D.meta.hyper_limit_m;
+    if (hl) {
+      const [sx, sy] = toScr(0, 0), r = hl / V.scale;
+      ctx.strokeStyle = "#c58bff"; ctx.setLineDash([12, 6]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+      circleLabel(sx, sy, r, `HYPER LIMIT · ${fmtDist(hl)} (${(hl / C / 60).toFixed(1)} light-min)`, "#c58bff");
+    }
+  }
+
+  drawMissiles(W);
+
+  // recent event flashes (last ~1.5 real seconds of playback, at least 20 sim seconds)
+  const flash = Math.max(20, P.speed * 1.5);
+  for (const e of D.events) {
+    if (e.t > P.t) break;
+    if (P.t - e.t > flash || !(e.type === "avoidance_maneuver" || e.type === "objective_complete" || e.type === "detonation")) continue;
+    let p;
+    if (e.type === "detonation") p = e.data.position_m; else { const o = D.byId[e.actor_id]; if (!o) continue; p = stateAt(o, P.t).p; }
+    const [sx, sy] = toScr(p[0], p[1]); const f = (P.t - e.t) / flash;
+    ctx.strokeStyle = e.type === "detonation" ? "#ff9f43" : e.type === "avoidance_maneuver" ? css("--warn") : "#7bf0a5"; ctx.globalAlpha = 1 - f;
+    ctx.lineWidth = e.type === "detonation" ? 2 : 1;
+    ctx.beginPath(); ctx.arc(sx, sy, (e.type === "detonation" ? 8 : 14) + f * (e.type === "detonation" ? 45 : 30), 0, 7); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineWidth = 1;
+  }
+
+  // scale bar
+  const bar = niceStep(V.scale * 120), bpx = bar / V.scale;
+  ctx.strokeStyle = css("--text"); ctx.fillStyle = css("--text"); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(W - 20 - bpx, H - 26); ctx.lineTo(W - 20, H - 26); ctx.stroke(); ctx.lineWidth = 1;
+  ctx.fillText(fmtDist(bar), W - 20 - bpx, H - 32);
+  ctx.fillStyle = css("--dim"); ctx.fillText("+x → ecliptic plane (top-down, z ignored)", 8, 14);
+}
+
+function drawMissiles(W) {
+  const rows = D.mrows; if (!rows.length || P.t < rows[0].t) return;
+  let lo = 0, hi = rows.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (rows[mid].t <= P.t) lo = mid; else hi = mid - 1; }
+  const r0 = rows[lo], r1 = rows[lo + 1], dt = D.meta.missile_output_interval_s || D.meta.time_step_s;
+  if (!r1 && P.t - r0.t > dt) return;
+  if (r1 && !r1.map) r1.map = Object.fromEntries(r1.missiles.map(m => [m.id, m]));
+  const fv = frameVel(P.t); let n = 0;
+  for (const m of r0.missiles) {
+    const m1 = r1 && r1.map[m.id], tau = P.t - r0.t; let p;
+    if (m1) {                                     // Hermite between per-step records using stored velocities
+      const h = r1.t - r0.t, s = tau / h, s2 = s * s, s3 = s2 * s;
+      p = m.position_m.map((x, i) => (2 * s3 - 3 * s2 + 1) * x + (s3 - 2 * s2 + s) * h * m.velocity_m_s[i] + (-2 * s3 + 3 * s2) * m1.position_m[i] + (s3 - s2) * h * m1.velocity_m_s[i]);
+    } else p = m.position_m.map((x, i) => x + m.velocity_m_s[i] * tau);
+    const [sx, sy] = toScr(p[0], p[1]); n++;
+    if (sx < -60 || sx > W + 60 || sy < -60 || sy > cv.clientHeight + 60) continue;
+    const col = factionColor(m.faction), vx = m.velocity_m_s[0] - fv[0], vy = m.velocity_m_s[1] - fv[1];
+    const tail = Math.min(40, Math.hypot(vx, vy) * 2 / V.scale);
+    if (tail > 2) { const a = Math.atan2(vy, vx); ctx.strokeStyle = col + "99"; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - Math.cos(a) * tail, sy + Math.sin(a) * tail); ctx.stroke(); }
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(sx, sy, 2.2, 0, 7); ctx.fill();
+  }
+  if (n) { ctx.fillStyle = css("--warn"); ctx.fillText(`${n} missile${n > 1 ? "s" : ""} in flight`, 8, 30); }
+}
+
+function drawStrip() {
+  const W = strip.clientWidth, H = strip.clientHeight, dpr = devicePixelRatio || 1;
+  if (strip.width !== W * dpr) { strip.width = W * dpr; strip.height = H * dpr; }
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0); sctx.clearRect(0, 0, W, H);
+  if (!D) return;
+  for (const e of D.events) {
+    if (e.type.startsWith("sensor_") || e.type === "maneuver_command" || e.type.startsWith("missile_")) continue;
+    sctx.fillStyle = e.type === "detonation" ? "#ff5a4f" : e.type === "avoidance_maneuver" ? css("--warn") : "#7bf0a5";
+    sctx.fillRect(e.t / D.tEnd * (W - 2), 2, 2, H - 4);
+  }
+  sctx.fillStyle = css("--hi"); sctx.fillRect(P.t / D.tEnd * (W - 2), 0, 2, H);
+}
+
+function updateInfo() {
+  const el = $("info");
+  if (!D || !V.selected) return;
+  const o = D.byId[V.selected], st = stateAt(o, P.t), rows = [["id", o.id], ["kind", o.kind + (o.meta.type ? " / " + o.meta.type : "")]];
+  if (o.kind === "ship") rows.push(["faction / class", `${o.meta.faction} / ${o.meta.class}`],
+    ["accel", (Math.hypot(...st.a) / 9.80665).toFixed(1) + " g"], ["integrity", st.integ.toFixed(3) + (st.integ < 1 ? "  (1 = undamaged)" : "")]);
+  rows.push(["position", `${fmtDist(st.p[0])}, ${fmtDist(st.p[1])}, ${fmtDist(st.p[2])}`],
+    ["speed", fmtVel(st.v)], ["dist. to Sun", fmtDist(Math.hypot(...st.p))]);
+  if (o.kind === "ship") {
+    let pb = null, pa = 0;                       // dominant gravitational body
+    for (const b of D.bodies) {
+      const q = stateAt(b, P.t).p, d2 = (q[0] - st.p[0]) ** 2 + (q[1] - st.p[1]) ** 2 + (q[2] - st.p[2]) ** 2, a = b.meta.mu_m3_s2 / d2;
+      if (a > pa) { pa = a; pb = b; }
+    }
+    if (pb) {
+      const q = stateAt(pb, P.t), r = Math.hypot(st.p[0] - q.p[0], st.p[1] - q.p[1], st.p[2] - q.p[2]);
+      const w = Math.hypot(st.v[0] - q.v[0], st.v[1] - q.v[1], st.v[2] - q.v[2]), mu = pb.meta.mu_m3_s2;
+      const sma = 1 / (2 / r - w * w / mu);
+      rows.push(["dominant body", `${pb.id} · ${fmtDist(r)} from centre`], ["speed vs " + pb.id, fmtVel([w, 0, 0])]);
+      if (sma > 0 && 2 / r > w * w / mu) rows.push(["orbit vs " + pb.id, `a ${fmtDist(sma)} · period ${(2 * Math.PI * Math.sqrt(sma ** 3 / mu) / 3600).toFixed(1)} h`]);
+      else rows.push(["orbit vs " + pb.id, "unbound (flyby)"]);
+    }
+    let nearest = null, nd = Infinity;
+    for (const s of D.ships) if (s !== o) { const q = stateAt(s, P.t).p, d = Math.hypot(q[0] - st.p[0], q[1] - st.p[1], q[2] - st.p[2]); if (d < nd) { nd = d; nearest = s; } }
+    if (nearest) rows.push(["nearest ship", `${nearest.id.replace(/^.*_group-/, "#")} ${fmtDist(nd)}`], ["light delay", (nd / C).toFixed(4) + " s"]);
+  }
+  el.innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("");
+}
+
+// ---------------------------------------------------------------- loop
+let last = performance.now();
+function frame(now) {
+  const dt = (now - last) / 1000; last = now;
+  if (D) {
+    if (P.playing) { P.t += dt * P.speed; if (P.t >= D.tEnd) { P.t = D.tEnd; P.playing = false; } $("scrub").value = P.t; }
+    $("play").textContent = P.playing ? "⏸ Pause" : "▶ Play"; $("play").classList.toggle("on", P.playing);
+    $("clock").textContent = fmtClock(P.t) + "  ·  " + P.speed + "×";
+    draw(); drawStrip(); updateInfo();
+  }
+  requestAnimationFrame(frame);
+}
+function resize() { draw(); }
+addEventListener("resize", resize);
+
+const run = new URLSearchParams(location.search).get("run");
+if (run) loadFromUrl(run).catch(e => setMsg(String(e) + " — serve the repo with `python -m simulator serve`", true));
+</script>
+</body>
+</html>

@@ -11,7 +11,9 @@ missiles:
       type: nuclear
       yield: null
       lethal_radius_km: null
-      damage_radius_km: null
+      damage_radius_km: 1        # per design: within 1 km of the target the warhead does damage (not a kill)
+      damage_falloff: linear     # damage = max_damage * (1 - range / damage_radius); detonation at closest approach
+      max_damage: 0.5            # fraction of integrity removed by a contact hit (integrity *= 1 - damage)
 
   xray_laser:
     type: missile

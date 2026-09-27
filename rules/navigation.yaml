@@ -9,6 +9,9 @@ navigation:
     planet_surface_clearance_km: 1000
     moon_surface_clearance_km: 500
     star_surface_clearance_km: 1000000
+    # Added for the simulator: asteroids and dwarf planets were not covered.
+    dwarf_planet_surface_clearance_km: 500
+    asteroid_surface_clearance_km: 500
 
   collision_avoidance:
     enabled: true

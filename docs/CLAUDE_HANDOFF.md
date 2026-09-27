@@ -1,20 +1,42 @@
 # Claude Implementation Handoff
 
-This repository currently contains the product/architecture specification and initial YAML schemas.
+Read `SPEC.md` first.
 
-Recommended first implementation milestone:
+The specification deliberately separates a runnable core simulator from unresolved combat numbers.
 
-1. Parse all YAML files with schema validation.
-2. Expand scenario groups into individual object instances.
-3. Implement 3D kinematics with longitudinal-axis acceleration constraints.
-4. Implement orientation updates and simple rotation-to-thrust behavior.
-5. Implement celestial-body gravity using `systems/solar_system.yaml`.
-6. Implement navigation safety checks and projected collision avoidance.
-7. Implement light-delay sensor observation events.
-8. Implement missile launch objects with powered and ballistic phases.
-9. Export a deterministic JSON event/state stream.
-10. Add a minimal tactical viewer before starting Blender integration.
+## Implement Milestone 1 now
 
-Keep simulator state authoritative and visualization consumers read-only.
+1. YAML loaders and useful validation errors.
+2. Unit normalization to SI.
+3. Scenario group expansion with deterministic IDs.
+4. Seeded orbital phase initialization.
+5. Keplerian body propagation adequate for the scenario timescale.
+6. Gravity from defined celestial bodies onto spacecraft.
+7. 3D ship kinematics.
+8. Orientation + longitudinal-axis thrust constraint.
+9. Navigation safety: separation, body exclusion, projected collision checks.
+10. Truth-state vs light-delayed observations.
+11. Deterministic `metadata.json`, `events.jsonl`, and `state.jsonl` output.
+12. CLI runner and tests.
 
-Do not hard-code battlecruiser or missile behavior in Python. All reusable capabilities should come from class YAML files.
+## Do not block Milestone 1 on combat numbers
+
+Null missile/graser/damage values are intentional. Do not silently invent canon values.
+
+If a later scenario invokes an unresolved weapon capability, emit a clear configuration error.
+
+## Suggested CLI
+
+```bash
+python -m starshiptactics run scenarios/example.yaml --output output/example
+```
+
+## Acceptance checks
+
+- Running the same scenario twice yields byte-equivalent logical output (allowing only explicitly documented metadata exceptions).
+- Five group members expand to five stable IDs.
+- Acceleration cannot exceed class limits.
+- Longitudinal-only thrust requires orientation before acceleration changes direction.
+- Ships do not violate the 100 km minimum separation in a simple crossing test.
+- A sensor event 20 light-minutes away is not received before 20 light-minutes have elapsed.
+- Output can be replayed without rerunning doctrine/navigation.

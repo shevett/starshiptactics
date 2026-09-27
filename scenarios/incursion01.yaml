@@ -1,11 +1,13 @@
 scenario:
-  id: example_engagement
+  id: incursion01
   system: solar_system
   random_seed: 12345
   time_step_s: 1.0
   duration_s: 21600
   snapshot_interval_s: 10
   orbital_phase_strategy: random
+  orbital_phase_deg:          # true anomaly; 0 puts Earth at perihelion on the +x axis
+    earth: 0
 
 factions:
   - id: red
@@ -30,8 +32,23 @@ units:
       type: line_abreast
       spacing_km: 200
     objective:
-      type: transit_to_point
-      destination_km: [0, 0, 0]
+      type: transit_to_orbit
+      body: earth
+      altitude_km: 30000
+    engagement:
+      mode: fire_at_will        # missile, salvo size etc. default from rules/doctrine.yaml
+      missile: standard_nuclear
+  - group: blue_defenders
+    faction: blue
+    class: battlecruiser
+    count: 5
+    orbit:
+      body: earth
+      altitude_km: 20000
+      spacing_km: 500
+    engagement:
+      mode: fire_at_will
+      missile: standard_nuclear
 
 termination:
   - type: duration_reached

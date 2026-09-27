@@ -1,0 +1,48 @@
+# Blue holds a circular orbit around Earth; red flies in from sunward and enters a higher orbit.
+scenario:
+  id: earth_orbit
+  system: solar_system
+  random_seed: 2024
+  time_step_s: 1.0
+  duration_s: 21600
+  snapshot_interval_s: 10
+  orbital_phase_strategy: random
+  orbital_phase_deg:          # true anomaly; 0 puts Earth at perihelion on the +x axis
+    earth: 0
+
+factions:
+  - id: red
+  - id: blue
+
+units:
+  - group: blue_picket
+    faction: blue
+    class: battlecruiser
+    count: 4
+    orbit:
+      body: earth
+      altitude_km: 20000      # or radius_km: distance from Earth's centre
+      spacing_km: 500         # along-track spacing (default: rules/simulation.yaml)
+      inclination_deg: 0      # relative to the ecliptic
+      direction: prograde
+      # phase_deg: 90         # omit for a seeded random position on the orbit
+
+  - group: red_bc_group
+    faction: red
+    class: battlecruiser
+    count: 5
+    position_km: {x: 110000000, y: 0, z: 0}
+    velocity_km_s: {x: 300, y: 0, z: 0}
+    orientation:
+      forward_vector: [1, 0, 0]
+    formation:
+      type: line_abreast
+      spacing_km: 200
+    objective:
+      type: transit_to_orbit
+      body: earth
+      altitude_km: 30000
+      direction: prograde
+
+termination:
+  - type: duration_reached

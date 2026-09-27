@@ -20,9 +20,21 @@ system:
     include_all_defined_bodies: true
     softening_km: 0.0
 
+# Optional fictional FTL boundary around the star (SPEC section 21). One of:
+#   radius_km: <km>    light_minutes: <light-minutes>    rule: spectral_class_linear
+# spectral_class_linear follows David Weber's Honorverse table: G0 = 22.00 light-minutes, minus 0.44 per
+# sub-class step toward cooler stars (Sol, G2V -> 21.12; K0 -> 17.60; M0 -> 13.20; M9 -> 9.24). The star's
+# spectral_class is read from the body below. Defined for classes F, G, K and M.
+hyper_limit:
+  rule: spectral_class_linear
+  baseline_class: G0
+  baseline_light_minutes: 22.0
+  step_light_minutes: 0.44
+
 bodies:
   sun:
     type: star
+    spectral_class: G2V
     parent: null
     mass_kg: 1.98847e30
     radius_km: 695700

@@ -1,0 +1,38 @@
+# Simulation-wide defaults. These are engineering defaults for the simulator,
+# not claims about any fictional canon.
+simulation:
+  constants:
+    standard_gravity_m_s2: 9.80665
+    speed_of_light_m_s: 299792458
+
+  defaults:
+    time_step_s: 1.0
+    duration_s: 21600
+    snapshot_interval_s: 10.0
+
+  attitude_control:
+    # Temporary simulator default until ship-class values are supplied.
+    default_max_rotation_rate_deg_s: 2.0
+    alignment_tolerance_deg: 0.5
+
+  orbit_initialization:
+    missing_inclination_deg: 0.0
+    warn_on_missing_optional_elements: true
+
+  navigation_defaults:
+    # Engineering defaults for the simulator's simple guidance law.
+    arrival_position_tolerance_km: 10.0
+    arrival_speed_tolerance_m_s: 10.0
+    braking_margin: 0.8            # fraction of the theoretical stopping distance planned for
+    exclusion_destination_margin: 1.05  # destinations inside an exclusion zone are pushed out to this multiple of the boundary
+    body_path_segments: 16
+    orbit_radius_tolerance_frac: 0.005  # transit_to_orbit is 'complete' when the semi-major axis is within this fraction of the target radius
+    orbit_eccentricity_tolerance: 0.005 # ...and the eccentricity of the orbit it is actually on is below this
+    default_orbit_slot_spacing_km: 1000 # along-track spacing of ships sharing an orbit (placement and insertion)
+    velocity_gain_time_s: 10.0     # guidance velocity-tracking time constant
+
+  output:
+    missile_output_interval_s: 2.0   # how often in-flight missiles are written to missiles.jsonl
+
+  sensors:
+    observation_interval_s: 10.0   # how often light-delayed contact tracks are refreshed
