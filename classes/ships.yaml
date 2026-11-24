@@ -8,7 +8,7 @@ classes:
       length_m: null
       beam_m: null
       height_m: null
-    mass_kg: null
+    mass_kg: 8.0e8      # ~800,000 metric tons (user-supplied); used for force-ratio / tonnage comparisons
 
     propulsion:
       max_acceleration_g: 450
@@ -46,3 +46,219 @@ classes:
         - id: broadside_graser
           count: 8
           weapon_class: capital_graser
+
+  # Source: Honorverse wiki "Reliant class" (Star Kingdom of Manticore, ~1900 PD), pasted by the user.
+  # Real design values; items the simulator does not model yet are kept as data under weapons/electronics
+  # so nothing has to be re-entered later. Assumption: "tons" are metric tons.
+  reliant:
+    role: battlecruiser
+    dimensions:
+      length_m: 713
+      beam_m: 91
+      height_m: 81            # the source gives 'draught'
+    mass_kg: 8.8125e8         # 881,250 tons
+
+    crew: {total: 2105, officers: 151, enlisted: 1362, marines: 592}
+
+    propulsion:
+      max_acceleration_g: 488.6        # the source's normal acceleration; the simulator treats this as the hard limit
+      emergency_acceleration_g: 515.5  # source's stated maximum; not used by the simulator yet
+      primary_thrust_axis: longitudinal
+      reverse_primary_thrust: false
+      lateral_primary_thrust: false
+      rotational_acceleration_deg_s2: null
+    power: {reactors: 3, type: "Isler GM-4R fusion"}
+
+    defenses:
+      geometry:
+        wedge: {dorsal: strong, ventral: strong}
+        sidewalls: {port: weaker, starboard: weaker}
+        vulnerable_arcs: {bow: true, stern: true}
+
+    sensors: {}                        # detection parameters are still an open question (docs/OPEN_QUESTIONS.md)
+    communications: {}
+    electronics_reference:             # not simulated
+      - AN/SPG-29/b gravitic detection array
+      - AN/SR-14a phased radar array
+      - AN/SL-14a lidar array
+      - AN/CAT-23b(64) fire control
+      - AN/CDT-19(40) defensive fire control
+      - AN/ELQ-146 ECM
+
+    weapons:
+      missile_batteries:
+        - id: main_broadside
+          tubes: 52                    # 52 Mod 7b launchers
+          cycle_time_s: 12             # PLACEHOLDER (carried over from the generic class; not in the source)
+          compatible_missiles:
+            - standard_nuclear         # stand-in for the Mk13 anti-ship missile, whose performance is not yet defined
+            - xray_laser
+          magazine_capacity: 1352      # Mk13 anti-ship missiles
+      grasers:
+        - {id: broadside_graser, count: 16, weapon_class: capital_graser}   # 16 Mk15 140 cm grasers
+      lasers_reference:                # not simulated
+        - {count: 16, model: "Mk73 105 cm laser"}
+        - {count: 2, model: "Mk49 127 cm laser"}
+      point_defense_reference:         # not simulated (point defense is a planned feature)
+        countermissile_launchers: 32   # 32 Mod 5b
+        countermissile_magazine: 9632  # Mk21 countermissiles
+        point_defense_lasers: 32       # 32 Mk16(6)
+        ew_drones: 10                  # Mk36
+    auxiliary_craft_reference:         # not simulated
+      - {count: 4, model: "Mk28 Condor-class pinnace"}
+      - {count: 2, model: "Mk9 Albatross-class shuttle"}
+      - {count: 4, model: "C3 Dakota-class cutter"}
+
+  # Source: Honorverse wiki "Minotaur class" (LAC carrier, Star Kingdom of Manticore, 1912 PD), pasted by the user.
+  # Assumptions: tons are metric tons; the source gives no units for the dimensions (taken as metres).
+  # Two wiki texts disagreed. RESOLVED (user decision): the class-page infobox values below are authoritative.
+  #   infobox (used): mass 6,178,500 tons, length 1,131, beam 189
+  #   narrative (HMS Minotaur, citing HH8, not used): "just under six million tons", length 2.2 km, beam 367 m
+  # Confirmed by both: offensive armament is chase-only (4 graser, 9 missile tubes); broadside is defensive only.
+  minotaur:
+    role: lac_carrier
+    dimensions:
+      length_m: 1131
+      beam_m: 189
+      height_m: 175           # the source gives 'draught'
+    mass_kg: 6.1785e9         # 6,178,500 tons
+
+    crew: {core: 650, marine_company: 1, lac_support: 300, lac_crew: 960}   # source: "a Marine company" (size not given)
+
+    propulsion:
+      max_acceleration_g: 428.2        # source's first-listed figure (4.199 km/s^2)
+      sustained_acceleration_g: 342.6  # source's "80%" figure (3.359 km/s^2); not used by the simulator yet
+      primary_thrust_axis: longitudinal
+      reverse_primary_thrust: false
+      lateral_primary_thrust: false
+      rotational_acceleration_deg_s2: null
+
+    defenses:
+      geometry:
+        wedge: {dorsal: strong, ventral: strong}     # PLACEHOLDER (copied from the other classes; not in the source)
+        sidewalls: {port: weaker, starboard: weaker}
+        vulnerable_arcs: {bow: true, stern: true}
+
+    sensors: {}
+    communications: {}
+
+    weapons:
+      # No missile battery is defined on purpose: the source lists 9 chase missile launchers but no magazine size.
+      # A fire_at_will group of this class fails with a clear 'no missile batteries' error until one is supplied.
+      missile_batteries: []
+      grasers:
+        - {id: chase_graser, count: 4, weapon_class: capital_graser}    # chase armament: 4 G
+      armament_reference:              # not simulated; counts as listed by the source
+        broadside: {countermissile_launchers: 30, point_defense: 28}
+        chase: {missile_launchers: 9, grasers: 4, countermissile_launchers: 10, point_defense: 10}
+      hangar_reference:                # not simulated (LAC launch and recovery is not a feature yet)
+        lac_bays: 100
+        lac_type: "Shrike-class light attack craft"     # from the narrative text
+
+  # Source: Honorverse wiki "Crusader class" (heavy cruiser, Star Kingdom of Manticore, 1851 PD), pasted by the user.
+  # Assumption: tons are metric tons.
+  crusader:
+    role: heavy_cruiser
+    dimensions:
+      length_m: 487
+      beam_m: 59
+      height_m: 49            # the source gives 'draught'
+    mass_kg: 2.465e8          # 246,500 tons
+
+    crew: {total: 897}
+
+    propulsion:
+      max_acceleration_g: 409.3
+      primary_thrust_axis: longitudinal
+      reverse_primary_thrust: false
+      lateral_primary_thrust: false
+      rotational_acceleration_deg_s2: null
+    power: {reactors: 2, type: "Isler/Buckley GM-series fusion"}
+
+    defenses:
+      geometry:
+        wedge: {dorsal: strong, ventral: strong}     # PLACEHOLDER (copied from the other classes; not in the source)
+        sidewalls: {port: weaker, starboard: weaker}
+        vulnerable_arcs: {bow: true, stern: true}
+
+    sensors: {}
+    communications: {}
+
+    weapons:
+      # No missile battery is defined on purpose: the source gives a 320-round Mk13 magazine but no launcher count
+      # (tubes) or cycle time. A fire_at_will group of this class fails with 'no missile batteries' until supplied.
+      missile_batteries: []
+      magazine_reference:              # not simulated unless a battery is defined above
+        mk13_anti_ship_missiles: 320
+        mk21_countermissiles: 976
+      point_defense_reference:         # not simulated
+        point_defense_lasers: 12       # Mk16(5), listed by the source under magazines
+    auxiliary_craft_reference:         # not simulated
+      - {count: 3, model: "Hawk-class pinnace"}
+      - {count: 1, model: "Albatross-class shuttle"}
+      - {count: 4, model: "Dakota-class cutter"}
+
+  # Source: Honorverse wiki "Majestic class" (dreadnought, Star Kingdom of Manticore, 1888 PD), pasted by the user.
+  # Assumption: tons are metric tons.
+  majestic:
+    role: dreadnought
+    dimensions:
+      length_m: 1278
+      beam_m: 185
+      height_m: 173           # the source gives 'draught'
+    mass_kg: 6.7505e9         # 6,750,500 tons
+
+    crew: {total: 3561, officers: 297, enlisted: 2669, marines: 595}
+
+    propulsion:
+      max_acceleration_g: 422.5
+      primary_thrust_axis: longitudinal
+      reverse_primary_thrust: false
+      lateral_primary_thrust: false
+      rotational_acceleration_deg_s2: null
+    power: {reactors: 5, type: "Isler GM-6R fusion"}
+
+    defenses:
+      geometry:
+        wedge: {dorsal: strong, ventral: strong}     # PLACEHOLDER (copied from the other classes; not in the source)
+        sidewalls: {port: weaker, starboard: weaker}
+        vulnerable_arcs: {bow: true, stern: true}
+
+    sensors: {}
+    communications: {}
+    electronics_reference:             # not simulated
+      - AN/SPG-28 gravitic detection array
+      - AN/SR-11d phased radar array
+      - AN/SL-13 lidar array
+      - AN/CAT-12(126) fire control system
+      - AN/CDT-14(84) defensive fire control
+      - AN/ELQ-128 ECM system
+
+    weapons:
+      missile_batteries:
+        - id: main_broadside
+          tubes: 72                    # 72 Mod 8a launchers
+          cycle_time_s: 12             # PLACEHOLDER (carried over from the generic class; not in the source)
+          compatible_missiles:
+            - standard_nuclear         # stand-in for the Mk19 anti-ship missile, whose performance is not yet defined
+            - xray_laser
+          magazine_capacity: 8640      # Mk19 anti-ship missiles
+      grasers:
+        - {id: capital_graser_mk91, count: 40, weapon_class: capital_graser}   # 40 Mk91 360 cm
+        - {id: capital_graser_mk52, count: 8, weapon_class: capital_graser}    # 8 Mk52 410 cm
+      lasers_reference:                # not simulated
+        - {count: 36, model: "Mk10 295 cm laser"}
+        - {count: 12, model: "Mk65 315 cm laser"}
+      other_weapons_reference:         # not simulated
+        - {count: 12, model: "Mk6 energy torpedo projector"}
+        - {count: 1, model: "Barnett-Chung Mod2 grav lance"}
+      point_defense_reference:         # not simulated (point defense is a planned feature)
+        countermissile_launchers: 64   # 64 Mod 5b
+        countermissile_magazine: 92160 # Mk21 countermissiles
+        point_defense_lasers: 64       # 64 Mk24(8)
+        ew_drones: 20                  # Mk40
+    auxiliary_craft_reference:         # not simulated
+      - {count: 4, model: "Mk28 Condor-class pinnace"}
+      - {count: 2, model: "Mk26 Skyhawk-class pinnace"}
+      - {count: 1, model: "Mk9 Albatross-class shuttle"}
+      - {count: 6, model: "C3 Dakota-class cutter"}
