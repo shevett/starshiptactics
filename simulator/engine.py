@@ -10,6 +10,7 @@ from .navigation import guidance, orbits, safety
 from .physics.dynamics import FORWARD, gravity, normalize, quat_between, rotate, slew_toward
 from .physics.orbits import Ephemeris
 from .units import G0
+from .doctrine.mission import MissionControl
 from .sensors.lightdelay import History, SensorNet
 from .weapons.missiles import MissileSwarm
 
@@ -97,6 +98,9 @@ class Simulation:
         self.amax = np.array([cfg.ship_classes[c].max_accel for c in cls])
         self.rate = np.array([cfg.ship_classes[c].max_rotation_rate for c in cls])
         self.mode = [None] * len(ids)
+        self.departed = np.zeros(len(ids), bool)      # left the field through the hyper limit (frozen, untargetable)
+        self.departing = np.zeros(len(ids), bool)     # currently trying to leave; crossing the limit then removes the ship
+        self.star = next((k for k, b in enumerate(self.cfg.bodies) if b.type == "star" and b.parent is None), None)
         self.anchors = {}
         self.avoid_reason = [None] * len(ids)
         self.adjusted = [set() for _ in ids]
@@ -154,7 +158,14 @@ class Simulation:
                     if tca <= 2.0 * (math.sqrt(2.0 * need / amax) + turn) + 2.0 * self.dt:
                         return a_av, "avoidance", f"ship:{others[2][k]}"
 
-        # 2. ordinary objective
+        # 2. mission behaviour (engage) takes precedence over the objective; the objective resumes when it ends
+        beh = self.mission.behavior.get(self.grp[i]) if self.mission else None
+        if beh is not None:
+            cmd = self._engage_command(i, beh, t, grav_i)
+            if cmd is not None:
+                return cmd
+
+        # 3. ordinary objective
         obj = self.objs[i]
         otype = obj.get("type")
         if otype == "transit_to_point":
@@ -167,6 +178,8 @@ class Simulation:
                                                                   "position_m": _r(pos, 3)})
         elif otype == "transit_to_orbit":
             return self._orbit_command(i, t, bp, bv, grav_i)
+        elif otype == "transit_to_hyper_limit":
+            return self._departure_command(i, bp, obj)
         elif otype == "hold_position":
             a = guidance.velocity_tracking(vel, np.zeros(3), self.tau, amax)
             if not obj["complete"] and speed < self.tol_vel:
@@ -179,6 +192,60 @@ class Simulation:
         # small corrections are 'trim' and not reported as maneuvers (avoids event spam on final approach)
         mode = "trim" if an < 0.05 * amax else ("accelerate" if np.dot(a, vel) >= 0 else "brake")
         return a - grav_i, mode, None      # feed-forward: cancel local gravity so ships can hold a position
+
+    def _departure_command(self, i, bp, obj):
+        """Burn flat out away from the star (or along the objective's fixed heading) until the hyper limit is crossed.
+
+        Nothing has to stop at the limit, so there is no braking curve: the ship turns, then thrusts. Collision and
+        exclusion-zone safety (step 1 of _navigate) still takes precedence over this command."""
+        self.departing[i] = True
+        if obj.get("heading") is not None:
+            d = np.array(obj["heading"], float)
+        else:
+            d = normalize(self.P[i] - bp[self.star])
+        return d * self.amax[i], "accelerate", None
+
+    def _check_departures(self, t, star_pos):
+        """A departing ship that has reached the hyper limit leaves the field (event hyper_departure)."""
+        limit = self.cfg.hyper_limit_m
+        if limit is None or self.star is None:
+            return
+        for i in np.nonzero(self.departing & ~self.departed)[0]:
+            dist = float(np.linalg.norm(self.P[i] - star_pos))
+            if dist >= limit:
+                self.departed[i] = True
+                self.A[i] = 0.0
+                self.thrust_prev[i] = 0.0
+                self.emit(t, "hyper_departure", self.ids[i], {
+                    "position_m": _r(self.P[i], 1), "velocity_m_s": _r(self.V[i], 3),
+                    "distance_from_star_m": round(dist, 1), "hyper_limit_m": round(limit, 1)})
+                obj = self.objs[i]
+                if obj.get("type") == "transit_to_hyper_limit" and not obj["complete"]:
+                    obj["complete"] = True
+                    self.emit(t, "objective_complete", self.ids[i], {"objective": "transit_to_hyper_limit",
+                                                                      "distance_from_star_m": round(dist, 1)})
+
+    def _engage_command(self, i, beh, t, grav_i):
+        """Close on the group's target track and hold `standoff_m` from it, at rest relative to it.
+
+        Works in the target's frame (position and velocity relative to the extrapolated track), so it is the same
+        braking-curve guidance as a transit, aimed at a point on the line from the target toward the group.
+        Ships keep their formation offset, perpendicular to that line. Gravity needs no compensation: target and
+        ship fall together, so the relative acceleration is the commanded one (an approximation that is fine
+        while the standoff is small compared with the distance to the nearest body)."""
+        st = self.sensors.known_target(self.fac[i], beh["target"], t)
+        if st is None:
+            return None
+        tp, tv = st
+        centre = self.mission.centre[self.grp[i]][0]
+        u = normalize(centre - tp)
+        slot = self.offset[i] - np.dot(self.offset[i], u) * u
+        rel, w = self.P[i] - tp, self.V[i] - tv
+        a = guidance.transit_command(rel, w, u * beh["standoff_m"] + slot, self.amax[i], self.tau,
+                                     math.pi / self.rate[i], self.margin)
+        an = np.linalg.norm(a)
+        mode = "trim" if an < 0.05 * self.amax[i] else ("accelerate" if np.dot(a, w) >= 0 else "brake")
+        return a, mode, None
 
     def _orbit_command(self, i, t, bp, bv, grav_i):
         """Two phases: brake to rest relative to the body at the orbit radius, then burn to circular speed."""
@@ -237,7 +304,7 @@ class Simulation:
         """Ships this ship may reason about: own faction (truth) + light-delayed tracks of others."""
         pos, vel, acc, ids = [], [], [], []
         for j in range(len(self.ids)):
-            if j != i and self.fac[j] == self.fac[i]:
+            if j != i and self.fac[j] == self.fac[i] and not self.departed[j]:
                 # Formation slots already guarantee separation within a group, and extrapolating two ships'
                 # slightly different thrust axes over minutes produces phantom crossings. So groupmates only
                 # count as obstacles once they are actually close.
@@ -262,7 +329,15 @@ class Simulation:
         hist = History(n_steps, nships, dt, self.P, self.V)
         interval = cfg.sim["simulation"]["sensors"]["observation_interval_s"]
         obs_every = max(1, int(round(interval / dt)))
-        self.sensors = SensorNet(hist, self.ids, self.fac, cfg.factions, interval, self.emit)
+        sens_cfg = cfg.sim["simulation"]["sensors"]
+        det_km = (cfg.scenario.get("sensors") or {}).get("detection_range_km", sens_cfg.get("detection_range_km"))
+        self.sensors = SensorNet(hist, self.ids, self.fac, cfg.factions, interval, self.emit,
+                                 detection_range_m=None if det_km is None else float(det_km) * 1000.0,
+                                 lose_range_factor=float(sens_cfg.get("lose_range_factor", 1.2)))
+        self.sensors.departed = self.departed
+        missions = {g.id: g.mission for g in cfg.groups if g.mission and g.mission["reactions"]}
+        self.mission = MissionControl(missions, self.grp, cfg.doctrine["doctrine"]["contact"],
+                                      self.doc["assumed_dead_integrity"], self.emit) if missions else None
         bmu = self.eph.mu * self.grav_mask
         self.pending_adjust = []
         state_f = open(out_dir / "state.jsonl", "w")
@@ -280,7 +355,8 @@ class Simulation:
                     self.sensors.update(t, self.P, emit_events=(step % obs_every == 0))
                 terminate = (step == n_steps) or any(s is not None and t >= s for s in stop_at)
                 if all_complete:
-                    active = [o for o in self.objs if o.get("type") in ("transit_to_point", "hold_position", "transit_to_orbit")]
+                    active = [o for o in self.objs if o.get("type") in ("transit_to_point", "hold_position", "transit_to_orbit",
+                                                                  "transit_to_hyper_limit")]
                     terminate = terminate or (bool(active) and all(o["complete"] for o in active))
                 if step % snap_every == 0 or terminate:
                     state_f.write(json.dumps(self._snapshot(t, bp, bv), separators=(",", ":")) + "\n")
@@ -288,10 +364,14 @@ class Simulation:
                     break
 
                 # decisions
+                if self.mission:
+                    self.mission.update(t, self.P, self.V, self.fac, self.ids, self.integrity, self.sensors)
                 thrust = np.zeros_like(self.P)
                 if grav is None:
                     grav = gravity(self.P, bp, bmu)
                 for i in range(nships):
+                    if self.departed[i]:
+                        continue
                     a_cmd, mode, reason = self._navigate(i, t, bp, bv, self._others_for(i, t), grav[i])
                     while self.pending_adjust:
                         k, body, d = self.pending_adjust.pop(0)
@@ -304,7 +384,8 @@ class Simulation:
                         self.avoid_reason[i] = reason
                     if mode not in ("avoidance", "trim") and mode != self.mode[i]:
                         self.emit(t, "maneuver_command", self.ids[i],
-                                  {"mode": mode, "objective": self.objs[i].get("type")})
+                                  {"mode": mode, "objective": (self.mission.label(self.grp[i], self.objs[i].get("type"))
+                                                               if self.mission else self.objs[i].get("type"))})
                     if mode not in ("avoidance", "trim"):
                         self.mode[i] = mode
                     an = float(np.linalg.norm(a_cmd))
@@ -325,7 +406,7 @@ class Simulation:
                     mthrust = self.swarm.thrust(t, lambda fac, j: self.sensors.known_target(fac, j, t))
                     a_ship = thrust + grav
                     det, burnouts, expired = self.swarm.advance(t, dt, mthrust, self.P, self.V, a_ship, self.fac,
-                                                                np.ones(nships, bool))
+                                                                ~self.departed)
                     self._resolve_missile_events(det, burnouts, expired)
 
                 # integrate (constant acceleration over the step)
@@ -336,8 +417,13 @@ class Simulation:
                 next_bodies = self.eph.at(t + dt)
                 grav = gravity(P_new, next_bodies[0], bmu)
                 self.A = thrust + grav
-                self.V = self.V + 0.5 * (a_old + self.A) * dt
-                self.P = P_new
+                self.A[self.departed] = 0.0
+                V_new = self.V + 0.5 * (a_old + self.A) * dt
+                P_new[self.departed] = self.P[self.departed]          # departed ships stay where they left
+                V_new[self.departed] = self.V[self.departed]
+                self.V, self.P = V_new, P_new
+                if self.departing.any() and self.star is not None:
+                    self._check_departures(t + dt, next_bodies[0][self.star])
         finally:
             state_f.close()
             missile_f.close()
@@ -352,7 +438,8 @@ class Simulation:
         for i, sid in enumerate(self.ids):
             objs.append({"id": sid, "kind": "ship", "position_m": _r(self.P[i], 3),
                          "velocity_m_s": _r(self.V[i], 6), "acceleration_m_s2": _r(self.A[i], 6),
-                         "orientation_xyzw": _r(self.Q[i], 9), "integrity": round(float(self.integrity[i]), 6)})
+                         "orientation_xyzw": _r(self.Q[i], 9), "integrity": round(float(self.integrity[i]), 6),
+                         **({"departed": True} if self.departed[i] else {})})
         row = {"t": round(t, 6), "objects": objs}
         tracks = {}
         for f, tr in self.sensors.tracks.items():
@@ -367,7 +454,7 @@ class Simulation:
     def _fire(self, t):
         """fire_at_will: each ready battery fires a salvo at the nearest hostile track inside its reach."""
         for i, eng in enumerate(self.engage):
-            if not eng or eng["mode"] != "fire_at_will":
+            if not eng or eng["mode"] != "fire_at_will" or self.departed[i]:
                 continue
             tracks = None
             for bat in self.batteries[i]:
@@ -378,14 +465,16 @@ class Simulation:
                 if tracks is None:
                     tracks = self.sensors.known_others(self.fac[i], t)
                 best, room = None, 0
+                primary = self.mission.engage_target(self.grp[i]) if self.mission else None
                 for j, p, _v in tracks:
                     d = float(np.linalg.norm(p - self.P[i]))
                     if d > reach or self.integrity[j] <= self.doc["assumed_dead_integrity"]:
                         continue
                     aimed = sum(1 for f, tg in zip(self.swarm.faction, self.swarm.target) if f == self.fac[i] and tg == j)
                     free = int(self.doc["max_missiles_in_flight_per_target"]) - aimed
-                    if free > 0 and (best is None or d < best[0]):
-                        best, room = (d, j), free
+                    key = (j != primary, d)                     # the group's primary target first, then nearest
+                    if free > 0 and (best is None or key < best[2]):
+                        best, room = (d, j, key), free
                 if best is None:
                     continue
                 n = min(eng["salvo_size"], bat["tubes"], bat["magazine"], room)

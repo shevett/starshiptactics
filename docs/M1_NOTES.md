@@ -18,7 +18,7 @@ Choices made where the spec was silent (tunables live in `rules/*.yaml`, not cod
   tolerance, using the component of the command along the actual axis.
 
 Known limitations: no path planning around bodies (a destination behind a planet can cause stop/start at the
-zone edge); station standoff is configured but no stations exist to enforce it; hyper-limit transitions, damage,
+zone edge); station standoff is configured but no stations exist to enforce it; hyper-limit arrival, damage,
 missiles and grasers are not implemented (weapon objectives raise a ConfigError listing unresolved values).
 
 ## Orbits (added after the first milestone-1 pass)
@@ -85,3 +85,22 @@ engagement:
 - **Limits:** no evasion, point defence, defensive-field effect, or friendly fire; a target that thrusts hard
   after the missile's last track update will be missed (hits of the coasting/orbiting ships in the examples land
   within ~100 m). Only the missile's own warhead radius is used, so nothing else about the warhead is required.
+
+## Missions and detection (see `docs/MISSIONS.md`)
+
+- `SensorNet` has an optional detection range; contacts are gained inside it and lost beyond range x
+  `lose_range_factor` (1.2). A lost contact's last track is kept so missiles already in flight can still steer.
+  With no range set the behaviour is unchanged (everything is detectable once its light arrives).
+- `simulator/doctrine/mission.py` classifies postures, evaluates reaction rules and keeps one engage behaviour per
+  group; `engine._engage_command` flies it (braking-curve guidance in the target's frame, standoff range).
+- `scenarios/incursion01.yaml` now gives red `profile: aggressive_transit` with a 10,000,000 km placeholder
+  detection range; blue still holds its orbit and fires at will (no mission reactions).
+
+## Hyper-limit departure
+
+- `transit_to_hyper_limit` objective: full thrust along the heading (default radially away from the star), no braking
+  curve; collision/exclusion safety still overrides it. Requires `hyper_limit` in the system file.
+- A *departing* ship that reaches `cfg.hyper_limit_m` from the primary star emits `hyper_departure` (and
+  `objective_complete`), is frozen in place, flagged `departed` in snapshots, ignored by sensors, fire control and
+  missile impact tests (`SensorNet.departed` and the swarm's alive mask). Missiles already chasing it coast on.
+- Not implemented: arrival at the limit, or leaving via a rule (`withdraw`) rather than an objective.

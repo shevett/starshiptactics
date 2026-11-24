@@ -30,6 +30,11 @@ These are deliberately NOT blockers for Milestone 1.
 - Exact protected arcs
 - Damage interaction rules
 
+## Sensors
+
+- Detection range per ship class (currently one scenario-level placeholder, `sensors.detection_range_km`)
+- Detection vs. signature (drive plumes, emissions, size) and line-of-sight
+
 ## Doctrine
 
 - Target selection
@@ -40,3 +45,6 @@ These are deliberately NOT blockers for Milestone 1.
 - Formation geometry
 
 The implementation should expose these as configuration rather than inventing hidden constants.
+- Reaction-rule defaults: posture thresholds, standoff range, pursue limits (`rules/doctrine.yaml`, placeholders)
+- Threat score for choosing the primary target (currently nearest matching contact)
+- Withdrawal / leash conditions (`withdraw`, `max_departure_km`, low integrity / magazine)

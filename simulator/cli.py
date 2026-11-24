@@ -20,7 +20,15 @@ def main(argv=None):
     sv = sub.add_parser("serve", help="serve the tactical viewer")
     sv.add_argument("--port", type=int, default=8000)
     sv.add_argument("--run", default=None, help="output directory to open, e.g. output/example_engagement")
+    rp = sub.add_parser("report", help="write an after-action analysis report (HTML) for a finished run")
+    rp.add_argument("run", help="run directory, e.g. output/incursion01")
+    rp.add_argument("--out", default=None, help="output file (default: <run>/report.html)")
     args = ap.parse_args(argv)
+
+    if args.cmd == "report":
+        from .report import write
+        print(f"Wrote {write(args.run, args.out)}")
+        return 0
 
     if args.cmd == "serve":
         root = Path(__file__).resolve().parent.parent

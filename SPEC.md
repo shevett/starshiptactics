@@ -346,6 +346,9 @@ It should eventually cover:
 
 For milestone 1, doctrine may be limited to movement objectives and defensive-orientation hooks.
 
+Group missions (a baseline objective plus ordered reaction rules that engage hostile contacts, with detection
+range) are specified in [`docs/MISSIONS.md`](docs/MISSIONS.md).
+
 Do NOT introduce machine learning or a general LLM into the simulation loop.
 
 ## 16. Scenario schema requirements
@@ -525,6 +528,16 @@ The system schema should support an optional fictional FTL boundary around a sta
 For the Solar System template, keep this field optional and separate from real astronomical physics. A scenario may place ships on or outside that boundary and transition them into normal-space simulation at a specified time.
 
 The core simulator does not need to simulate FTL travel; it only needs to support an arrival/transition event at the boundary.
+
+**Implemented: departure.** A ship with the `transit_to_hyper_limit` objective (optional fixed `heading`; default is
+straight out from the star) burns flat out and, on reaching the limit, emits `hyper_departure` and leaves the field:
+it is frozen in place (`"departed": true` in `state.jsonl`), dropped from every faction's contacts (`contact_lost`,
+reason `hyper_departure`) and can no longer be targeted or hit. Only ships that are departing can leave; a ship merely
+flying across the boundary is unaffected. **Not yet implemented:** arrival (entering the system at the boundary).
+
+The Solar System limit currently comes from the `spectral_class_linear` rule in `systems/solar_system.yaml`
+(21.12 light-minutes for Sol, about 2.54 AU); it is a lookup on the star's spectral class, not derived from gravity
+wells, and there are no planetary limits. Departure only uses the resulting radius.
 
 ## 22. Milestones
 

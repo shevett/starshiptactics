@@ -15,3 +15,23 @@ doctrine:
     ballistic_expiry_s: 120        # a missile that has burned out is removed this long after burnout if unspent
     max_missiles_in_flight_per_target: 20   # hold fire on a target while this many of the faction's missiles are already aimed at it
     assumed_dead_integrity: 0.05   # stop targeting ships at or below this integrity (assumes perfect, instant battle damage assessment)
+
+  # How a group classifies hostile tracks (PLACEHOLDER tuning values; see docs/MISSIONS.md).
+  # Posture is judged from the track's range-rate relative to the group's centre:
+  #   closing  = range shrinking faster than the threshold;  fleeing = growing faster than it;  holding = neither.
+  contact:
+    posture_min_rate_m_s: 100        # |range-rate| below this is 'holding'
+    posture_min_duration_s: 60       # a new posture must persist this long before it replaces the old one (anti-flapping)
+
+  engage:
+    default_standoff_km: 1000000     # hold this range from the target when a reaction does not say otherwise
+
+  # Reusable reaction sets, referenced from a scenario group as  mission: {profile: <name>}.
+  # Reactions are evaluated top to bottom; the first one with a matching hostile track wins. If none matches the group
+  # simply flies its objective. A contact that is lost or destroyed stops matching, so the objective resumes.
+  profiles:
+    aggressive_transit:              # "get to my objective, but fight anything that shows up"
+      reactions:
+        - {when: {hostile: closing}, do: {engage: {}}}
+        - {when: {hostile: holding}, do: {engage: {}}}
+        - {when: {hostile: fleeing}, do: {pursue: {max_km: 5000000}}}   # chase a little, then get back to the mission

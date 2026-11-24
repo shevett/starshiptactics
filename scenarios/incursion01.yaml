@@ -6,6 +6,8 @@ scenario:
   duration_s: 21600
   snapshot_interval_s: 10
   orbital_phase_strategy: random
+  sensors:
+    detection_range_km: 10000000     # PLACEHOLDER: ships only gain contacts inside this range (see docs/OPEN_QUESTIONS.md)
   orbital_phase_deg:          # true anomaly; 0 puts Earth at perihelion on the +x axis
     earth: 0
 
@@ -31,10 +33,12 @@ units:
     formation:
       type: line_abreast
       spacing_km: 200
-    objective:
-      type: transit_to_orbit
-      body: earth
-      altitude_km: 30000
+    mission:
+      profile: aggressive_transit    # objective first, but engage any hostile contact (rules/doctrine.yaml)
+      objective:
+        type: transit_to_orbit
+        body: earth
+        altitude_km: 30000
     engagement:
       mode: fire_at_will        # missile, salvo size etc. default from rules/doctrine.yaml
       missile: standard_nuclear

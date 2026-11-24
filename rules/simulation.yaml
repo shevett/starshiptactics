@@ -36,3 +36,5 @@ simulation:
 
   sensors:
     observation_interval_s: 10.0   # how often light-delayed contact tracks are refreshed
+    detection_range_km: null       # null = every ship is detectable at any range. A scenario may set  sensors: {detection_range_km: N}
+    lose_range_factor: 1.2         # a contact is only lost beyond detection range x this (hysteresis)

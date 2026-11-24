@@ -54,8 +54,16 @@ def observe(history, observer_pos, target_idx, t):
 class SensorNet:
     """Faction contact tracks built only from light-delayed observations of other factions' ships."""
 
-    def __init__(self, history, ship_ids, ship_factions, factions, interval_s, emit):
+    def __init__(self, history, ship_ids, ship_factions, factions, interval_s, emit,
+                 detection_range_m=None, lose_range_factor=1.2):
+        """detection_range_m: None = every ship is detectable at any range (once its light arrives).
+        Otherwise a contact is gained when an observer is within range and lost beyond range * lose_range_factor
+        (hysteresis, so a contact on the boundary does not flicker)."""
         self.h = history
+        self.range = detection_range_m
+        self.lose_factor = lose_range_factor
+        self.stale = {f: {} for f in factions}    # last track of contacts that have been lost
+        self.departed = None                      # optional bool array (engine-owned): ships that have left via the hyper limit
         self.ids = ship_ids
         self.fac = ship_factions
         self.factions = factions
@@ -65,16 +73,38 @@ class SensorNet:
 
     def update(self, t, pos, emit_events=True):
         for f in self.factions:
-            observers = [i for i, x in enumerate(self.fac) if x == f]
+            gone = self.departed if self.departed is not None else ()
+            observers = [i for i, x in enumerate(self.fac) if x == f and not (len(gone) and gone[i])]
             for j, tf in enumerate(self.fac):
                 if tf == f or not observers:
                     continue
+                if len(gone) and gone[j]:                          # left the field: no longer a contact at all
+                    self.stale[f].pop(j, None)
+                    if self.tracks[f].pop(j, None) is not None:
+                        self.emit(t, "contact_lost", f"faction:{f}", {"faction": f, "target_id": self.ids[j],
+                                                                       "reason": "hyper_departure"})
+                    continue
+                had = j in self.tracks[f]
+                limit = None if self.range is None else self.range * (self.lose_factor if had else 1.0)
                 best = None
                 for i in observers:
                     obs = observe(self.h, pos[i], j, t)
+                    if limit is not None and float(np.linalg.norm(pos[i] - obs[1])) > limit:
+                        continue                                  # outside detection range
                     if best is None or obs[0] > best[1][0]:      # freshest information wins
                         best = (i, obs)
+                if best is None:
+                    if had:
+                        self.stale[f][j] = self.tracks[f].pop(j)
+                        self.emit(t, "contact_lost", f"faction:{f}", {"faction": f, "target_id": self.ids[j],
+                                  "last_observed_t": self.stale[f][j]["observed_t"]})
+                    continue
                 i, (t_obs, p, v, delay) = best
+                if not had:
+                    self.stale[f].pop(j, None)
+                    self.emit(t, "contact_gained", f"faction:{f}", {
+                        "faction": f, "target_id": self.ids[j], "observer_id": self.ids[i],
+                        "range_m": round(float(np.linalg.norm(pos[i] - p)), 1), "observed_t": t_obs})
                 self.tracks[f][j] = {"id": self.ids[j], "observed_t": t_obs, "position_m": p, "velocity_m_s": v}
                 data = {"observer_id": self.ids[i], "target_id": self.ids[j], "faction": f,
                         "observed_t": t_obs, "received_t": t, "delay_s": delay,
@@ -87,13 +117,17 @@ class SensorNet:
         """Tracks of other factions' ships, extrapolated (constant velocity) to time t."""
         out = []
         for j, tr in self.tracks[faction].items():
+            if self.departed is not None and self.departed[j]:
+                continue
             dt = t - tr["observed_t"]
             out.append((j, tr["position_m"] + tr["velocity_m_s"] * dt, tr["velocity_m_s"]))
         return out
 
     def known_target(self, faction, j, t):
         """(position, velocity) of ship j from faction's track, extrapolated to time t; None if never observed."""
-        tr = self.tracks[faction].get(j)
+        if self.departed is not None and self.departed[j]:
+            return None
+        tr = self.tracks[faction].get(j) or self.stale[faction].get(j)    # a missile may outlive its contact
         if tr is None:
             return None
         return tr["position_m"] + tr["velocity_m_s"] * (t - tr["observed_t"]), tr["velocity_m_s"]

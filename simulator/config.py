@@ -12,10 +12,12 @@ import yaml
 from .errors import ConfigError
 from .units import C, DAY_S, G0, KM, deg, pick_vector
 
-OBJECTIVE_TYPES = {"coast", "hold_position", "transit_to_point", "transit_to_orbit"}
+OBJECTIVE_TYPES = {"coast", "hold_position", "transit_to_point", "transit_to_orbit", "transit_to_hyper_limit"}
 DIRECTIONS = {"prograde": 1.0, "retrograde": -1.0}
 FORMATIONS = {"none", "line_abreast"}
 TERMINATIONS = {"duration_reached", "all_objectives_complete", "scripted_stop"}
+POSTURES = {"closing", "fleeing", "holding"}                  # classification of a hostile track (see docs/MISSIONS.md)
+REACTION_ACTIONS = {"engage", "pursue", "ignore", "resume_objective"}
 
 
 @dataclass
@@ -56,6 +58,7 @@ class Group:
     objective: dict
     orbit: dict | None = None      # initial circular orbit around a body (instead of position/velocity)
     engagement: dict | None = None # rules of engagement (weapons); None = hold fire
+    mission: dict | None = None    # reaction rules layered over the objective; None = objective only
 
 
 @dataclass
@@ -274,6 +277,72 @@ def _parse_engagement(spec, cls, missiles, where, doctrine):
     return out
 
 
+def _parse_reaction(r, where, defaults):
+    """Validate one reaction rule and normalise it to SI: {when:{hostile,max_range_m}, do:{action,...}}."""
+    if not isinstance(r, dict) or set(r) - {"when", "do", "note"}:
+        raise ValueError(f"{where}: a reaction is a mapping with 'when' and 'do' keys")
+    when, do = r.get("when"), r.get("do")
+    if not isinstance(when, dict) or set(when) - {"hostile", "max_range_km"} or "hostile" not in when:
+        raise ValueError(f"{where}.when: expected {{hostile: closing|fleeing|holding|any[, max_range_km: N]}}")
+    if when["hostile"] != "any" and when["hostile"] not in POSTURES:
+        raise ValueError(f"{where}.when.hostile: {when['hostile']!r} not in {sorted(POSTURES | {'any'})}")
+    out_when = {"hostile": when["hostile"]}
+    if "max_range_km" in when:
+        out_when["max_range_m"] = float(when["max_range_km"]) * KM
+    if isinstance(do, str):
+        do = {do: {}}
+    if not isinstance(do, dict) or len(do) != 1:
+        raise ValueError(f"{where}.do: expected an action name or a one-key mapping, one of {sorted(REACTION_ACTIONS)}")
+    (action, params), = do.items()
+    params = params or {}
+    if action not in REACTION_ACTIONS or not isinstance(params, dict):
+        raise ValueError(f"{where}.do: unknown action {action!r}; known actions: {sorted(REACTION_ACTIONS)}")
+    out = {"action": action}
+    if action in ("engage", "pursue"):
+        bad = set(params) - {"standoff_km", "max_range_km", "max_km"}
+        if bad:
+            raise ValueError(f"{where}.do.{action}: unknown parameter(s) {sorted(bad)}")
+        out["standoff_m"] = float(params.get("standoff_km", defaults["default_standoff_km"])) * KM
+        cap = params.get("max_range_km", params.get("max_km"))
+        if action == "pursue" and cap is None:
+            raise ValueError(f"{where}.do.pursue: needs max_km (the range beyond which the chase is abandoned)")
+        if cap is not None:
+            out["max_range_m"] = float(cap) * KM
+        if out["standoff_m"] <= 0:
+            raise ValueError(f"{where}.do.{action}.standoff_km: must be > 0")
+        out["action"] = "engage"
+        out["label"] = action
+    elif params:
+        raise ValueError(f"{where}.do.{action}: takes no parameters")
+    return {"when": out_when, "do": out}
+
+
+def _parse_mission(spec, doctrine, where):
+    """Validate a group's `mission:` block. Returns {reactions: [...], profile: name|None}.
+
+    Scenario `reactions` are evaluated before the named profile's, so a scenario can override a profile."""
+    doc = (doctrine or {}).get("doctrine", {})
+    defaults = doc.get("engage") or {}
+    if "default_standoff_km" not in defaults:
+        raise ValueError(f"{where}: rules/doctrine.yaml needs doctrine.engage.default_standoff_km")
+    if not isinstance(spec, dict) or set(spec) - {"profile", "objective", "reactions"}:
+        raise ValueError(f"{where}: expected keys profile / objective / reactions")
+    reactions, profile = [], spec.get("profile")
+    if profile is not None:
+        profiles = doc.get("profiles") or {}
+        if profile not in profiles:
+            raise ValueError(f"{where}.profile: unknown doctrine profile {profile!r}; known: {sorted(profiles)}")
+    sources = [(f"{where}.reactions", spec.get("reactions") or [])]
+    if profile is not None:
+        sources.append((f"doctrine.profiles.{profile}.reactions", (doc["profiles"][profile] or {}).get("reactions") or []))
+    for label, rules in sources:
+        if not isinstance(rules, list):
+            raise ValueError(f"{label}: expected a list")
+        for k, r in enumerate(rules):
+            reactions.append(_parse_reaction(r, f"{label}[{k}]", defaults))
+    return {"profile": profile, "reactions": reactions}
+
+
 def _null_fields(d, prefix=""):
     out = []
     for k, v in d.items():
@@ -406,6 +475,11 @@ def load_config(scenario_path, root=None):
     cfg.snapshot_interval_s = _num(sc, "snapshot_interval_s", "scenario", problems, positive=True,
                                    default=defaults.get("snapshot_interval_s"))
     cfg.start_time_s = _num(sc, "start_time_s", "scenario", problems, default=0.0)
+    sens = sc.get("sensors") or {}
+    if not isinstance(sens, dict) or set(sens) - {"detection_range_km"}:
+        problems.append("scenario.sensors: expected {detection_range_km: N}")
+    elif sens.get("detection_range_km") is not None:
+        _num(sens, "detection_range_km", "scenario.sensors", problems, positive=True)
     cfg.phase_strategy = sc.get("orbital_phase_strategy", simd.get("orbit_initialization", {}).get("phase_strategy", "random"))
     if cfg.phase_strategy not in ("random", "zero"):
         problems.append(f"scenario.orbital_phase_strategy: must be 'random' or 'zero', got {cfg.phase_strategy!r}")
@@ -466,12 +540,23 @@ def load_config(scenario_path, root=None):
             if ftype not in FORMATIONS:
                 raise ValueError(f"{w}.formation.type: {ftype!r} not in {sorted(FORMATIONS)}")
             spacing = float(form.get("spacing_km", 0)) * KM
-            obj = dict(u.get("objective") or {"type": "coast"})
+            if "mission" in u and "objective" in (u["mission"] or {}) and "objective" in u:
+                raise ValueError(f"{w}: give the objective either at group level or inside mission:, not both")
+            obj = dict(((u.get("mission") or {}).get("objective")) or u.get("objective") or {"type": "coast"})
             otype = obj.get("type")
             if otype not in OBJECTIVE_TYPES:
                 raise ValueError(f"{w}.objective.type: {otype!r} not in {sorted(OBJECTIVE_TYPES)}")
             if otype == "transit_to_orbit":
                 obj["orbit"] = _parse_orbit(obj, w + ".objective", cfg.bodies, nav_margin, allow_phase=False)
+            if otype == "transit_to_hyper_limit":
+                if cfg.hyper_limit_m is None:
+                    raise ValueError(f"{w}.objective: transit_to_hyper_limit needs a hyper_limit in systems/{sc.get('system')}.yaml")
+                hd = obj.get("heading")
+                if hd is not None:
+                    if not isinstance(hd, (list, tuple)) or len(hd) != 3 or math.sqrt(sum(float(c) ** 2 for c in hd)) == 0:
+                        raise ValueError(f"{w}.objective.heading: need a non-zero 3-vector (or omit it to fly straight out from the star)")
+                    n = math.sqrt(sum(float(c) ** 2 for c in hd))
+                    obj["heading"] = [float(c) / n for c in hd]
             if otype == "transit_to_point":
                 obj["destination_m"] = pick_vector(
                     obj, {"destination_km": KM, "destination_m": 1.0}, w + ".objective")
@@ -480,8 +565,9 @@ def load_config(scenario_path, root=None):
             engagement = None
             if "engagement" in u and u.get("class") in cfg.ship_classes:
                 engagement = _parse_engagement(u["engagement"] or {}, cfg.ship_classes[u["class"]], missiles, w + ".engagement", doctrine)
+            mission = _parse_mission(u["mission"], doctrine, w + ".mission") if u.get("mission") else None
             cfg.groups.append(Group(gid, u.get("faction"), u.get("class"), count, pos, vel, fwd, ftype, spacing, obj, orbit,
-                                    engagement))
+                                    engagement, mission))
         except ValueError as exc:
             problems.append(str(exc))
 
