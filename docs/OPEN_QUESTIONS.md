@@ -34,6 +34,13 @@ These are deliberately NOT blockers for Milestone 1.
 
 - Detection range per ship class (currently one scenario-level placeholder, `sensors.detection_range_km`)
 - Detection vs. signature (drive plumes, emissions, size) and line-of-sight
+- Information speed (DECIDED direction, not built). Ordinary sensing (radar, lidar, passive IR) is lightspeed-limited, and
+  that is what the simulator models now (light-delayed tracks). Gravitic sensors and their comms are treated as
+  faster-than-light, as in the books, so a picket or sensor platform can relay what it sees to a receiver before the light
+  reaches it. No scenario has gravitic sensors or pickets yet, so this changes nothing today. When it is built: sensor
+  type per class, a propagation speed for gravitic links, and relay paths between platforms.
+- `sensors.detection_range_km` is a sensitivity range (how far a sensor can pick a target out of the noise), not a
+  speed-of-light limit; the light delay is separate and automatic. Per-class ranges (ideally in light-seconds) are still to do.
 
 ## Doctrine
 

@@ -56,3 +56,4 @@ units:
 
 termination:
   - type: duration_reached
+  - type: all_objectives_complete   # battle over: survivors have settled (hulks and departed ships do not count)

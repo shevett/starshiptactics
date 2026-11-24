@@ -270,3 +270,17 @@ class WithdrawRuntime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BodiesAreObstacles(unittest.TestCase):
+    def test_escape_heading_avoids_a_planets_exclusion_zone(self):
+        from simulator.doctrine import escape
+        heads = escape.candidate_headings(32, 45.0)
+        args = dict(p0=np.zeros(3), v0=np.zeros(3), star=np.array([-1.0e10, 0, 0]), limit=1.0e10 + 1.0e7, amax=4000.0,
+                    rate=1.0, fwd=np.array([1.0, 0, 0]), hostiles=[], heads=heads)
+        free = escape.assess(**args)
+        blocked = escape.assess(**args, bodies=(np.array([[3.0e6, 0, 0]]), np.zeros((1, 3)), np.array([1.0e6])))
+        self.assertTrue(free["exists"] and blocked["exists"])
+        self.assertGreater(free["heading"][0], 0.95)                              # straight out when nothing is in the way
+        off_axis = float(np.linalg.norm(np.cross(blocked["heading"], [1.0, 0, 0])))   # sine of the angle to the planet
+        self.assertGreater(off_axis * 3.0e6, 1.0e6)                               # the chosen line clears the exclusion zone

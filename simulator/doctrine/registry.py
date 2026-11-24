@@ -95,6 +95,10 @@ ACTIONS = {
             "commit": {"type": "bool", "default": True,
                        "summary": "Once started, keep withdrawing even if the rule stops matching.",
                        "tooltip": "Without it the group re-evaluates every step and may turn back."},
+            "release_when_clear": {"type": "bool", "default": True,
+                                   "summary": "A committed withdrawal ends, and the group returns to its objective, once no hostile ship or missile is left.",
+                                   "tooltip": "Judged from true state (perfect battle damage assessment, like destroyed-ness): every hostile "
+                                              "ship destroyed or departed and none of its missiles still in flight. Ships that have already left through the hyper limit cannot return."},
             "if_no_route": {"type": "enum", "values": ["fight", "hold", "flee_anyway"], "default": "fight",
                             "summary": "What to do when no safe escape heading exists.",
                             "tooltip": "fight: skip this rule and let the rules below it decide (usually engage); "

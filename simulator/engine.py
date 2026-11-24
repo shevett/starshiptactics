@@ -93,6 +93,16 @@ class Simulation:
         self.integrity = np.ones(len(ids))          # 1 = undamaged, 0 = complete structural failure
         self.P, self.V, self.Q = np.array(P).reshape(-1, 3), np.array(V).reshape(-1, 3), np.array(Q).reshape(-1, 4)
         self.offset = np.array(offs).reshape(-1, 3)   # formation slot relative to group centre
+        # Ships that start spread along an orbit have no formation offsets. Remember their order and spacing along the
+        # group's line so a group coming back to orbit can re-form it (otherwise all ships aim at one point).
+        self.slot_d = np.zeros(len(ids))
+        for g in set(grp):
+            m = [k for k, x in enumerate(grp) if x == g]
+            if len(m) > 1:
+                lay = self.P[m] - self.P[m].mean(axis=0)
+                far = lay[int(np.argmax(np.linalg.norm(lay, axis=1)))]
+                if np.linalg.norm(far) > 0:
+                    self.slot_d[m] = lay @ (far / np.linalg.norm(far))
         self.A = np.zeros_like(self.P)
         self.thrust_prev = np.zeros_like(self.P)      # last step's thrust acceleration (for path prediction)
         self.amax = np.array([cfg.ship_classes[c].max_accel for c in cls])
@@ -221,6 +231,9 @@ class Simulation:
             if g == group and obj.get("type") == "transit_to_orbit" and not self.departed[i]:
                 obj["complete"], obj["phase"] = False, "approach"
                 obj.pop("ready", None)
+        for i, g in enumerate(self.grp):
+            if g == group:
+                self.departing[i] = False                  # an abandoned withdrawal must not still count as a departure
         self.anchors = {k: v for k, v in self.anchors.items() if k[0] != group}
 
     def _check_departures(self, t, star_pos):
@@ -294,7 +307,10 @@ class Simulation:
                 mean_rel = np.mean([self.P[j] for j in members], axis=0) - bp[b]
                 self.anchors[key] = orbits.capture_direction(mean_rel, n)
             u_c = self.anchors[key]
-            slot = self.offset[i] - np.dot(self.offset[i], u_c) * u_c        # keep the offset tangential
+            if np.linalg.norm(self.offset[i]) > 0:
+                slot = self.offset[i] - np.dot(self.offset[i], u_c) * u_c    # keep the offset tangential
+            else:                                                            # orbit-start group: spread along the orbit
+                slot = self.slot_d[i] * orbits.tangent(n, u_c, 1)
             a = guidance.transit_command(rel, w, u_c * r_orb + slot, amax, self.tau, math.pi / self.rate[i], self.margin)
             if abs(rmag - r_orb) < max(self.tol_pos, 0.5 * tol["radius"] * r_orb) and np.linalg.norm(w) < 0.1 * vc:
                 obj["ready"] = True
@@ -386,9 +402,11 @@ class Simulation:
                     self.sensors.update(t, self.P, emit_events=(step % obs_every == 0))
                 terminate = (step == n_steps) or any(s is not None and t >= s for s in stop_at)
                 if all_complete:
-                    active = [o for i, o in enumerate(self.objs) if not self.destroyed[i] and o.get("type") in ("transit_to_point", "hold_position", "transit_to_orbit",
+                    active = [o for i, o in enumerate(self.objs) if not self.destroyed[i] and not self.departed[i] and o.get("type") in ("transit_to_point", "hold_position", "transit_to_orbit",
                                                                   "transit_to_hyper_limit")]
-                    terminate = terminate or (bool(active) and all(o["complete"] for o in active))
+                    busy = {g for g, b in self.mission.behavior.items()} if self.mission else set()    # engaging / withdrawing
+                    settled = all(o["complete"] and self.grp[i] not in busy for i, o in enumerate(self.objs) if o in active)
+                    terminate = terminate or (bool(active) and settled)
                 if step % snap_every == 0 or terminate:
                     state_f.write(json.dumps(self._snapshot(t, bp, bv), separators=(",", ":")) + "\n")
                 if terminate:
@@ -396,7 +414,7 @@ class Simulation:
 
                 # decisions
                 if self.mission:
-                    self.mission.update(t, bp)
+                    self.mission.update(t, bp, bv)
                 thrust = np.zeros_like(self.P)
                 if grav is None:
                     grav = gravity(self.P, bp, bmu)

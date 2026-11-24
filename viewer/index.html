@@ -32,9 +32,15 @@
   input[type=checkbox] { accent-color: var(--hi); }
   #info div { display: flex; justify-content: space-between; gap: 8px; }
   #info span:first-child { color: var(--dim); }
+  .modal { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .modal.hidden { display: none; }
+  .modal .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px 14px; min-width: 300px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 30px #000a; }
+  .modal .mh { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--hi); }
   #fleet { max-height: 340px; overflow-y: auto; }
   #fleet .fac { display: flex; justify-content: space-between; margin: 6px 0 2px; font-weight: 600; }
-  #fleet .ship { display: grid; grid-template-columns: 128px 1fr 36px; align-items: center; gap: 6px; padding: 1px 2px; cursor: pointer; border-radius: 2px; }
+  #fleet .ship { padding: 2px 2px 3px; cursor: pointer; border-radius: 2px; }
+  #fleet .r1 { display: grid; grid-template-columns: 128px 1fr 36px; align-items: center; gap: 6px; }
+  #fleet .r2 { color: var(--dim); font: 10.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding-left: 2px; white-space: pre; overflow: hidden; }
   #fleet .ship:hover, #fleet .ship.sel { background: #10242c; }
   #fleet .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #fleet .bar { height: 8px; background: var(--grid); border-radius: 2px; overflow: hidden; }
@@ -88,29 +94,13 @@
     <h3>View</h3>
     <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
       <select id="follow" title="centre on"></select>
-      <button id="fitShips" title="keep every ship on screen, panning and zooming automatically (drag, wheel or follow turns it off)">Fit ships</button>
+      <button id="fitShips" title="keep every ship on screen, panning and zooming automatically. Wheel widens or tightens the margin; click again to reset. Dragging or changing 'centre on' turns it off">Fit ships</button>
       <button id="fitSys">Fit system</button>
     </div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Perspective
       <select id="persp"></select>
     </div>
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Vector horizon
-      <select id="horizon"></select>
-    </div>
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Trail
-      <select id="trail"></select>
-    </div>
-    <label><input type="checkbox" id="oLabels" checked> labels</label>
-    <label><input type="checkbox" id="oVel" checked> velocity vectors / projected path</label>
-    <label><input type="checkbox" id="oAcc"> acceleration vectors</label>
-    <label><input type="checkbox" id="oTrails" checked> trails</label>
-    <label><input type="checkbox" id="oBodies" checked> celestial bodies</label>
-    <label><input type="checkbox" id="oRings" checked> range rings on selected</label>
-    <label><input type="checkbox" id="oSep" checked> minimum-separation circles</label>
-    <label><input type="checkbox" id="oExcl" checked> celestial exclusion zones</label>
-    <label><input type="checkbox" id="oEnv" checked> missile envelope &amp; hyper limit</label>
-    <label><input type="checkbox" id="oGrid" checked> grid</label>
-    <label><input type="checkbox" id="oTruth"> truth ghosts in faction view</label>
+    <button id="optBtn" title="what the map draws (o)">Display options…</button>
   </section>
   <section>
     <h3>Fleet status</h3>
@@ -128,13 +118,37 @@
   </section>
 </aside>
 
+
+<div id="optModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Display options">
+  <div class="card">
+    <div class="mh"><b>Display options</b><button id="optClose" title="close (Esc)">✕</button></div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Vector horizon
+      <select id="horizon"></select>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Trail
+      <select id="trail"></select>
+    </div>
+    <label><input type="checkbox" id="oLabels" checked> labels</label>
+    <label><input type="checkbox" id="oVel" checked> velocity vectors / projected path</label>
+    <label><input type="checkbox" id="oAcc"> acceleration vectors</label>
+    <label><input type="checkbox" id="oTrails" checked> trails</label>
+    <label><input type="checkbox" id="oBodies" checked> celestial bodies</label>
+    <label><input type="checkbox" id="oRings" checked> range rings on selected</label>
+    <label><input type="checkbox" id="oSep" checked> minimum-separation circles</label>
+    <label><input type="checkbox" id="oExcl" checked> celestial exclusion zones</label>
+    <label><input type="checkbox" id="oEnv" checked> missile envelope &amp; hyper limit</label>
+    <label><input type="checkbox" id="oGrid" checked> grid</label>
+    <label><input type="checkbox" id="oTruth"> truth ghosts in faction view</label>
+  </div>
+</div>
+
 <script>
 "use strict";
 const C = 299792458, AU = 1.495978707e11;
 const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d"), strip = $("strip"), sctx = strip.getContext("2d");
 let D = null;                      // loaded run
-const V = { cx: 0, cy: 0, scale: 1e9, follow: "sun", selected: null };   // scale = metres per pixel
+const V = { cx: 0, cy: 0, scale: 1e9, follow: "sun", selected: null, autofit: false, fitZoom: 1 };   // scale = metres per pixel
 const P = { t: 0, playing: false, speed: 60 };
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
@@ -307,6 +321,18 @@ addEventListener("keydown", e => {
   if (e.code === "ArrowLeft") seek(P.t - (e.shiftKey ? 600 : 10));
 });
 
+
+// display options modal (hidden by default)
+const optModal = $("optModal");
+function openOpts(open) { optModal.classList.toggle("hidden", !open); }
+$("optBtn").onclick = () => openOpts(true);
+$("optClose").onclick = () => openOpts(false);
+optModal.addEventListener("pointerdown", e => { if (e.target === optModal) openOpts(false); });
+addEventListener("keydown", e => {
+  if (e.code === "Escape") openOpts(false);
+  if (e.key === "o" && D && e.target.tagName !== "SELECT" && e.target.tagName !== "INPUT") openOpts(optModal.classList.contains("hidden"));
+});
+
 // ---------------------------------------------------------------- view geometry
 function followPos(t) {
   const f = V.follow;
@@ -338,7 +364,8 @@ function frameVel(t) {
 // Fit ships: a mode, not a one-shot. Every frame the camera is re-framed around the ships still in play
 // (departed ones are ignored), zooming out at once when someone would leave the screen and easing in otherwise.
 function fitShips() {
-  V.autofit = true; $("fitShips").classList.add("on");
+  V.autofit = true; V.fitZoom = 1;                     // clicking Fit ships always resets the margin
+  $("fitShips").classList.add("on");
   autoFit(true);
 }
 function stopAutofit() { V.autofit = false; $("fitShips").classList.remove("on"); }
@@ -348,7 +375,7 @@ function autoFit(snap) {
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const W = cv.clientWidth, H = cv.clientHeight, margin = 70;                     // px kept clear around the edge
-  const need = Math.max((x1 - x0) / Math.max(W - 2 * margin, 50), (y1 - y0) / Math.max(H - 2 * margin, 50), 1e4 / 50);
+  const need = V.fitZoom * Math.max((x1 - x0) / Math.max(W - 2 * margin, 50), (y1 - y0) / Math.max(H - 2 * margin, 50), 1e4 / 50);
   V.follow = "free"; $("follow").value = "free";
   const tx = (x0 + x1) / 2, ty = (y0 + y1) / 2;
   if (snap) { V.scale = need; V.cx = tx; V.cy = ty; return; }
@@ -382,8 +409,10 @@ cv.addEventListener("pointermove", e => {
 });
 cv.addEventListener("pointerup", e => { if (drag && !drag.moved) pick(e.offsetX, e.offsetY); drag = null; });
 cv.addEventListener("wheel", e => {
-  e.preventDefault(); stopAutofit();
+  e.preventDefault();
   const k = Math.exp(e.deltaY * 0.0015);
+  if (V.autofit) { V.fitZoom = Math.min(1e4, Math.max(0.05, V.fitZoom * k)); return; }   // stay in Fit ships, just wider / tighter
+
   const wx = V.cx + (e.offsetX - cv.clientWidth / 2) * V.scale, wy = V.cy - (e.offsetY - cv.clientHeight / 2) * V.scale;
   V.scale *= k;
   if (V.follow === "free") { V.cx = wx - (e.offsetX - cv.clientWidth / 2) * V.scale; V.cy = wy + (e.offsetY - cv.clientHeight / 2) * V.scale; }
@@ -662,9 +691,9 @@ function buildFleet() {
     h.innerHTML = `<span>${f}</span><span></span>`; el.appendChild(h); fleetHead[f] = h.lastChild;
     for (const s of ships) {
       const r = document.createElement("div"); r.className = "ship"; r.title = s.id;
-      r.innerHTML = `<span class="nm">${s.id.replace(s.meta.group + "-", s.meta.group.replace(/^(red|blue)_/, "") + " ")}</span><span class="bar"><i style="background:${factionColor(f)}"></i></span><span class="val"></span>`;
+      r.innerHTML = `<div class="r1"><span class="nm">${s.id.replace(s.meta.group + "-", s.meta.group.replace(/^(red|blue)_/, "") + " ")}</span><span class="bar"><i style="background:${factionColor(f)}"></i></span><span class="val"></span></div><div class="r2"></div>`;
       r.onclick = () => { V.selected = s.id; };
-      el.appendChild(r); fleetRows[s.id] = { r, bar: r.querySelector("i"), val: r.querySelector(".val") };
+      el.appendChild(r); fleetRows[s.id] = { r, bar: r.querySelector("i"), val: r.querySelector(".val"), kin: r.querySelector(".r2") };
     }
   }
 }
@@ -678,6 +707,14 @@ function updateFleet() {
     w.bar.style.width = (pct * 100).toFixed(1) + "%"; w.bar.style.opacity = st.dead || st.gone ? .6 : 1;
     w.bar.style.background = st.dead ? HULK : factionColor(f);
     w.val.textContent = st.dead ? "dead" : st.gone ? "gone" : pct.toFixed(2);
+    if (st.gone) w.kin.textContent = "departed via hyper limit";
+    else {                                   // fixed-width fields in a monospace row, so the digits never shift
+      const g = Math.hypot(...st.a) / 9.80665, sp = Math.hypot(...st.v) / 1e3;
+      const brg = (Math.atan2(st.v[1], st.v[0]) * 180 / Math.PI + 360) % 360;
+      const el = Math.asin(Math.max(-1, Math.min(1, st.v[2] * 1e-3 / (sp || 1)))) * 180 / Math.PI;
+      const f = (x, d, w) => x.toFixed(d).padStart(w, " ");
+      w.kin.textContent = `a:${f(g, 1, 5)}g · v:${f(sp, 3, 10)}km/s · h:${String(Math.round(brg) % 360).padStart(3, "0")}° ${(el < 0 ? "-" : "+") + String(Math.round(Math.abs(el))).padStart(2, "0")}°`;
+    }
     w.r.className = "ship" + (st.dead ? " dead" : st.gone ? " gone" : "") + (V.selected === s.id ? " sel" : "");
     w.r.title = `${s.id} · ${s.meta.class} · integrity ${st.integ.toFixed(3)}${st.gone ? " · departed via hyper limit" : ""}`;
   }

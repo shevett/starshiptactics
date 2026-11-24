@@ -48,9 +48,9 @@ class MissionControl:
         return b["kind"] if b else objective_type
 
     # ------------------------------------------------------------------ per-step update
-    def update(self, t, bp):
+    def update(self, t, bp, bv=None):
         sim = self.sim
-        self.bp = bp
+        self.bp, self.bv = bp, bv
         for g, mission in self.missions.items():
             live = [i for i in self.members[g] if not sim.departed[i] and not sim.destroyed[i]]
             if not live:
@@ -61,6 +61,9 @@ class MissionControl:
                       if sim.integrity[j] > self.dead}
             post = self._classify(g, t, tracks, c, cv)
             cur = self.behavior.get(g)
+            if cur and cur["kind"] == "withdraw" and cur["commit"] and cur["release"] and not self._hostiles_remain(g):
+                self._apply(g, t, None, post, tracks, reason="no hostile ship or missile remains")        # the field is clear: go home
+                cur = None
             if cur and cur["kind"] == "withdraw" and cur["commit"]:
                 esc = self._escape(g, t, live, c, cv, tracks)          # keep the heading fresh while a route exists
                 if esc["exists"]:
@@ -106,9 +109,18 @@ class MissionControl:
         res = escape.assess(c, cv, self.bp[sim.star], sim.cfg.hyper_limit_m,
                             float(min(sim.amax[i] for i in live)), float(min(sim.rate[i] for i in live)),
                             rotate(sim.Q[live[0]], FORWARD), hostiles, self.heads,
-                            float(self.esc["sample_step_s"]), float(self.esc["max_path_s"]), float(self.esc["margin_cap_s"]))
+                            float(self.esc["sample_step_s"]), float(self.esc["max_path_s"]), float(self.esc["margin_cap_s"]),
+                            bodies=None if self.bv is None else (self.bp, self.bv, sim.excl * float(self.esc.get("body_margin", 1.1))))
         self.esc_cache[g] = (t, res)
         return res
+
+    def _hostiles_remain(self, g):
+        sim = self.sim
+        f = sim.fac[self.members[g][0]]
+        if any(m != f for m in sim.swarm.faction):             # hostile missiles still in flight are still a threat
+            return True
+        return any(sim.fac[j] != f and not sim.departed[j] and not sim.destroyed[j] and sim.integrity[j] > self.dead
+                   for j in range(len(sim.ids)))
 
     # ------------------------------------------------------------------ strength accounting
     def _own_strength(self, g):
@@ -215,7 +227,7 @@ class MissionControl:
             parts.append(fmt[name].format(v) if v is not None else f"{name} n/a")
         return "; ".join(parts) or "rule matched"
 
-    def _apply(self, g, t, choice, post, tracks):
+    def _apply(self, g, t, choice, post, tracks, reason="no matching rule"):
         sim = self.sim
         cur = self.behavior.get(g)
         if choice is None:
@@ -225,13 +237,13 @@ class MissionControl:
                 self.emit(t, "mission_changed", g, {
                     "behavior": "objective", "previous": cur["kind"],
                     "previous_target_id": sim.ids[cur["target"]] if cur["target"] is not None else None,
-                    "reason": "no matching rule"})
+                    "reason": reason})
             return
         k, rule, j, info = choice
         do = rule["do"]
         kind = "withdraw" if do["action"] == "withdraw" else "engage"
         new = {"kind": kind, "target": j, "rule": k, "label": do["label"], "standoff_m": do.get("standoff_m"),
-               "commit": bool(do.get("commit")), "heading": info.get("heading")}
+               "commit": bool(do.get("commit")), "release": bool(do.get("release_when_clear")), "heading": info.get("heading")}
         changed = not cur or cur["kind"] != kind or cur["target"] != j or cur["rule"] != k
         if changed:
             data = {"behavior": kind, "previous": cur["kind"] if cur else "objective", "rule_index": k,

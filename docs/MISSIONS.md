@@ -72,7 +72,9 @@ match, so the group flies back to its orbit, and it only goes out again once the
 
 **`withdraw`**: `to` is `hyper_limit` (the only destination so far). `commit: true` (default) means that once started the
 group never re-evaluates: it keeps burning to the limit. With `commit: false` it turns back when the rule stops matching.
-`if_no_route` says what to do when no safe heading exists: `fight` (default) skips the rule so the ones below it decide,
+`release_when_clear` (default true) ends a committed withdrawal once no hostile ship or missile is left (true state: perfect
+battle damage assessment); the group then flies its objective again, so a defender that fled and then won goes back to
+orbit. A ship that has already crossed the hyper limit has left for good. `if_no_route` says what to do when no safe heading exists: `fight` (default) skips the rule so the ones below it decide,
 `hold` stops evaluating rules, `flee_anyway` leaves straight out from the star regardless.
 
 ## Profiles and their parameters (`rules/doctrine.yaml`)
@@ -97,6 +99,13 @@ A hostile track's posture is its range-rate relative to the group's centre of ma
 (range shrinking faster than `posture_min_rate_m_s`), `fleeing` (growing faster), otherwise `holding`. The first sighting
 takes the posture at face value; later changes must persist `posture_min_duration_s` first.
 
+## End states
+
+A scenario can end with the `all_objectives_complete` termination: every ship still in play has completed its objective
+and no group is mid-engagement or mid-withdrawal. Destroyed ships (hulks) and departed ships do not count. So the winners
+finish by getting home: defenders re-form their orbit, attackers settle into the orbit they came for. (A group that
+returns to an orbit it started in re-forms it in its original order and spacing.) `incursion01` and `incursion02` use it.
+
 ## Output events
 
 `contact_gained`, `contact_lost` (actor `faction:<id>`), `posture_changed` and `mission_changed` (actor = group id).
@@ -109,8 +118,8 @@ behaviour is active. The report (`python3 -m simulator report <run>`) lists cont
 
 - Detection is one range (`sensors.detection_range_km`); per-class sensors and line of sight come later.
 - Posture is relative-motion based: a stationary target that the group closes on is `closing` from its own view.
-- The escape plan ignores gravity and body exclusion zones (flight-time safety still avoids bodies), assumes hostiles never
-  change course or accelerate, and treats the group as one point. Hostile classes without a missile envelope count as
+- The escape plan ignores gravity, assumes hostiles never change course or accelerate, and treats the group as one point.
+  Planets and the Sun are obstacles: a heading through a body's exclusion zone (x `escape.body_margin`) is never chosen. Hostile classes without a missile envelope count as
   harmless (e.g. a class whose launchers are not yet in the database).
 - `withdraw` can only go to the hyper limit. Departure is a one-way removal; there is no arrival yet.
 - Hostile strength is tonnage only. Missile defence, wedge geometry and so on do not enter it, and a hostile's own

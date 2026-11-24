@@ -29,6 +29,7 @@ doctrine:
 
   # Escape assessment (the `escape_margin_below_s` condition and the `withdraw` action). PLACEHOLDER tuning values.
   escape:
+    body_margin: 1.1            # escape paths keep this factor outside every body's exclusion zone
     envelope_factor: 1.0             # a hostile's envelope radius = its missile powered reach x this
     update_interval_s: 30            # how often a group re-plans its escape
     ring_headings: 32                # candidate headings in the ecliptic plane (plus two tilted rings of half as many)
