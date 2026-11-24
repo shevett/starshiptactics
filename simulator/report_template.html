@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb; --panel: #f4f3f0; --border: #dddcd6; --grid: #e9e8e3;
+  --ink: #0b0b0b; --ink2: #52514e; --ink3: #7b7a75;
+  --blue: #2a78d6; --red: #e34948; --other: #6250d6;
+  --seq-0: #cde2fb; --seq-1: #86b6ef; --seq-2: #3987e5; --seq-3: #1c5cab; --seq-4: #0d366b;
+  --warn-bg: #fbf1d9; --warn-ink: #6b4a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface: #1a1a19; --panel: #232321; --border: #3a3a37; --grid: #2e2e2c;
+    --ink: #f0efec; --ink2: #c3c2b7; --ink3: #8f8e86;
+    --blue: #3987e5; --red: #e66767; --other: #9085e9;
+    --seq-0: #1d2a3b; --seq-1: #184f95; --seq-2: #2a78d6; --seq-3: #6da7ec; --seq-4: #b7d3f6;
+    --warn-bg: #3a3017; --warn-ink: #f0d58a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19; --panel: #232321; --border: #3a3a37; --grid: #2e2e2c;
+  --ink: #f0efec; --ink2: #c3c2b7; --ink3: #8f8e86;
+  --blue: #3987e5; --red: #e66767; --other: #9085e9;
+  --seq-0: #1d2a3b; --seq-1: #184f95; --seq-2: #2a78d6; --seq-3: #6da7ec; --seq-4: #b7d3f6;
+  --warn-bg: #3a3017; --warn-ink: #f0d58a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--surface); color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 2px; letter-spacing: .01em; }
+h2 { font-size: 15px; margin: 0 0 2px; }
+.sub { color: var(--ink2); margin: 0 0 16px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.note { background: var(--warn-bg); color: var(--warn-ink); border-radius: 6px; padding: 8px 12px; margin: 12px 0 20px; font-size: 13px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+.card h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; display: flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+.kv span:nth-child(odd) { color: var(--ink2); }
+.kv span:nth-child(even) { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 14px 10px; margin-bottom: 16px; }
+.panel > p { margin: 0 0 8px; color: var(--ink2); font-size: 13px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
+.filters .lab { color: var(--ink2); font-size: 13px; margin-right: 2px; }
+button.seg { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+button.seg[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+button.seg:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink2); margin: 0 0 6px; }
+.legend i { display: inline-block; vertical-align: middle; margin-right: 5px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.axis text { fill: var(--ink3); font-size: 11px; }
+.axis .title { fill: var(--ink2); }
+.grid line { stroke: var(--grid); stroke-width: 1; }
+.tip { position: absolute; pointer-events: none; z-index: 5; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 12px; min-width: 120px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18); display: none; max-width: 320px; }
+.tip .hd { color: var(--ink2); margin-bottom: 3px; }
+.tip .row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tip .row b { font-variant-numeric: tabular-nums; margin-left: auto; padding-left: 12px; }
+.tip .row span.nm { color: var(--ink2); }
+.tip .key { width: 14px; height: 0; border-top: 2px solid; flex: none; }
+details { margin-top: 6px; }
+summary { cursor: pointer; color: var(--ink2); font-size: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; margin-top: 6px; }
+th, td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink2); font-weight: 600; }
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl li { display: flex; gap: 12px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.tl li:last-child { border-bottom: 0; }
+.tl .t { width: 76px; color: var(--ink2); font-variant-numeric: tabular-nums; flex: none; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 800px) { .two { grid-template-columns: 1fr; } }
+.cellrect { cursor: default; }
+.cellrect:hover { stroke: var(--ink); stroke-width: 2; }
+.bar:hover { opacity: .8; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub" id="subtitle"></p>
+  <div class="note" id="note"></div>
+  <div class="cards" id="cards"></div>
+
+  <div class="panel">
+    <h2>Key moments</h2>
+    <ul class="tl" id="moments"></ul>
+  </div>
+
+  <div class="filters" role="group" aria-label="Time range">
+    <span class="lab">Time range</span>
+    <button class="seg" data-range="window" aria-pressed="true">Engagement</button>
+    <button class="seg" data-range="all" aria-pressed="false">Whole run</button>
+    <span class="lab" style="margin-left:12px">applies to the time charts below</span>
+  </div>
+
+  <div class="panel"><h2>Range between factions</h2>
+    <p>Closest and average distance across all hostile ship pairs. Light-delay = range / c (about 3.3 s per 1,000,000 km).</p>
+    <div id="c-range"></div></div>
+
+  <div class="panel"><h2>Missiles</h2>
+    <p>Cumulative launches (solid) and detonations (dashed) by firing faction, plus missiles currently in flight.</p>
+    <div class="two"><div id="c-cum"></div><div id="c-flight"></div></div></div>
+
+  <div class="panel"><h2>Hull integrity</h2>
+    <p>1.0 is undamaged. Log scale; the dotted line is the doctrine's "assumed dead" threshold. Integrity does not yet reduce ship capability.</p>
+    <div id="c-integrity"></div></div>
+
+  <div class="two">
+    <div class="panel"><h2>Speed</h2><p id="speed-sub"></p><div id="c-speed"></div></div>
+    <div class="panel"><h2>Acceleration</h2><p>Magnitude of commanded + gravitational acceleration, in g.</p><div id="c-accel"></div></div>
+  </div>
+
+  <div class="panel"><h2>Where it happened</h2>
+    <p id="traj-sub"></p>
+    <div class="filters" role="group" aria-label="Map view" id="viewbtns"></div>
+    <div id="c-traj"></div></div>
+
+  <div class="two">
+    <div class="panel"><h2>Who shot whom</h2><p>Missiles launched (rows fired at columns); darker cells carry more missiles.</p><div id="c-matrix"></div></div>
+    <div class="panel"><h2>Miss distance</h2><p>Range from each warhead to its target at detonation. Hits within the damage radius cause damage.</p><div id="c-miss"></div></div>
+  </div>
+
+  <div class="panel"><h2>Ships</h2><div id="ships"></div></div>
+  <div class="panel" id="warnpanel" style="display:none"><h2>Configuration warnings</h2><ul id="warns"></ul></div>
+</main>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+const D = /*__DATA__*/null;
+const NS = "http://www.w3.org/2000/svg";
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fcolor = (f) => f === "blue" ? css("--blue") : f === "red" ? css("--red") : css("--other");
+const FACT = D.factions;
+const shipFac = Object.fromEntries(D.ships.map(s => [s.id, s.faction]));
+const tip = $("tip");
+
+function el(name, attrs = {}, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function div(cls, text, parent) {
+  const d = document.createElement("div"); if (cls) d.className = cls;
+  if (text != null) d.textContent = text; if (parent) parent.appendChild(d); return d;
+}
+const fmtT = (t) => { t = Math.round(t); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return `T+${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`; };
+const fmtN = (v, d = 3) => v == null ? "-" : (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3)) ? v.toExponential(2)
+  : Number(v.toPrecision(d)).toLocaleString("en-US", {maximumFractionDigits: 6});
+const fmtKm = (v) => Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + " Mkm" : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(0) + "k km" : Math.abs(v) >= 100 ? v.toFixed(0) + " km" : v.toFixed(1) + " km";
+
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo || 1, raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw) || raw;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 * span; v += step) out.push(+v.toPrecision(12));
+  return out;
+}
+function bisect(xs, t) { let a = 0, b = xs.length - 1; while (a < b) { const m = (a + b) >> 1; if (xs[m] < t) a = m + 1; else b = m; } return a; }
+function valueAt(s, t) {
+  const i = bisect(s.x, t);
+  if (s.step) { const j = s.x[i] === t ? i : Math.max(0, i - 1); return s.y[j]; }
+  if (i > 0 && Math.abs(s.x[i - 1] - t) < Math.abs(s.x[i] - t)) return s.y[i - 1];
+  return s.y[i];
+}
+function showTip(host, evt, build) {
+  tip.replaceChildren(); build(tip); tip.style.display = "block";
+  const r = host.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = evt.clientX - r.left + 14, y = evt.clientY - r.top + 10;
+  if (x + w > r.width) x = evt.clientX - r.left - w - 14;
+  if (y + h > r.height + 60) y = Math.max(0, r.height - h);
+  host.appendChild(tip); tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+function legend(host, items) {
+  const lg = div("legend", null, host);
+  for (const it of items) {
+    const s = div("", null, lg);
+    const i = document.createElement("i");
+    i.style.cssText = `width:16px;height:0;border-top:${it.width || 2}px ${it.dash ? "dashed" : "solid"} ${it.color}`;
+    s.appendChild(i); s.appendChild(document.createTextNode(it.name));
+  }
+}
+
+/* ---------- generic line chart ---------- */
+function lineChart(host, cfg) {
+  host.replaceChildren();
+  if (cfg.legend) legend(host, cfg.legend);
+  const box = div("chart", null, host);
+  const W = Math.max(280, box.clientWidth || host.clientWidth || 600), H = cfg.height || 250;
+  const m = {l: 58, r: 12, t: 8, b: 26}, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const [x0, x1] = cfg.xdom;
+  // y domain
+  let lo = Infinity, hi = -Infinity;
+  for (const s of cfg.series) for (let i = 0; i < s.x.length; i++) {
+    const x = s.x[i]; if (x < x0 || x > x1) continue; const v = s.y[i];
+    if (v == null || (cfg.ylog && v <= 0)) continue; if (v < lo) lo = v; if (v > hi) hi = v;
+  }
+  for (const h of cfg.hlines || []) { lo = Math.min(lo, h.y); hi = Math.max(hi, h.y); }
+  if (!isFinite(lo)) { lo = cfg.ylog ? 1e-6 : 0; hi = cfg.ylog ? 1 : 1; }
+  let ticks;
+  if (cfg.ylog) {
+    lo = Math.max(lo, cfg.ymin || 1e-12); lo = Math.pow(10, Math.floor(Math.log10(lo))); hi = Math.pow(10, Math.ceil(Math.log10(hi)));
+    if (hi <= lo) hi = lo * 10;
+    ticks = []; for (let e = Math.log10(lo); e <= Math.log10(hi) + 1e-9; e++) ticks.push(Math.pow(10, Math.round(e)));
+    if (ticks.length > 8) ticks = ticks.filter((_, i) => i % Math.ceil(ticks.length / 7) === 0);
+  } else {
+    if (cfg.ymin != null) lo = cfg.ymin; else if (cfg.yzero !== false && lo > 0) lo = 0;
+    if (hi === lo) hi = lo + 1;
+    ticks = niceTicks(lo, hi, 5); hi = Math.max(hi, ticks[ticks.length - 1]);
+    if (lo < ticks[0]) lo = Math.min(lo, ticks[0]);
+  }
+  const X = (t) => m.l + (t - x0) / (x1 - x0 || 1) * pw;
+  const Y = (v) => cfg.ylog ? m.t + ph - (Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) * ph
+                            : m.t + ph - (v - lo) / (hi - lo || 1) * ph;
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": cfg.aria || cfg.ytitle}, box);
+  const gg = el("g", {class: "grid"}, svg), ax = el("g", {class: "axis"}, svg);
+  for (const v of ticks) {
+    el("line", {x1: m.l, x2: m.l + pw, y1: Y(v), y2: Y(v)}, gg);
+    const t = el("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end"}, ax); t.textContent = (cfg.yfmt || fmtN)(v);
+  }
+  const xt = niceTicks(x0, x1, Math.max(3, Math.min(8, Math.floor(pw / 110))));
+  for (const v of xt) {
+    el("line", {x1: X(v), x2: X(v), y1: m.t, y2: m.t + ph}, gg);
+    const t = el("text", {x: X(v), y: H - 8, "text-anchor": "middle"}, ax); t.textContent = fmtT(v).slice(2);
+  }
+  const clip = "clip" + Math.random().toString(36).slice(2);
+  const cp = el("clipPath", {id: clip}, svg); el("rect", {x: m.l, y: m.t - 2, width: pw, height: ph + 4}, cp);
+  const plot = el("g", {"clip-path": `url(#${clip})`}, svg);
+  for (const v of cfg.vlines || []) {
+    if (v.t < x0 || v.t > x1) continue;
+    el("line", {x1: X(v.t), x2: X(v.t), y1: m.t, y2: m.t + ph, stroke: css("--ink3"), "stroke-dasharray": "2 4", "stroke-width": 1}, plot);
+  }
+  for (const h of cfg.hlines || [])
+    el("line", {x1: m.l, x2: m.l + pw, y1: Y(h.y), y2: Y(h.y), stroke: css("--ink3"), "stroke-dasharray": "1 3", "stroke-width": 1.5}, plot);
+  for (const s of cfg.series) {
+    let d = "", prev = null;
+    // include one point either side of the window so lines enter the plot
+    const i0 = Math.max(0, bisect(s.x, x0) - 1);
+    for (let i = i0; i < s.x.length; i++) {
+      const v = s.y[i]; if (v == null) continue;
+      const px = X(s.x[i]), py = Y(v);
+      if (d === "") d = `M${px.toFixed(1)} ${py.toFixed(1)}`;
+      else if (s.step) d += `H${px.toFixed(1)}V${py.toFixed(1)}`;
+      else d += `L${px.toFixed(1)} ${py.toFixed(1)}`;
+      if (s.x[i] > x1) break;
+    }
+    if (d) el("path", {d, fill: "none", stroke: s.color, "stroke-width": s.width || 1.5, "stroke-linejoin": "round",
+      "stroke-dasharray": s.dash ? "5 3" : "none", opacity: s.opacity == null ? 1 : s.opacity}, plot);
+  }
+  // hover
+  const cross = el("line", {y1: m.t, y2: m.t + ph, stroke: css("--ink2"), "stroke-width": 1, visibility: "hidden"}, svg);
+  const ov = el("rect", {x: m.l, y: m.t, width: pw, height: ph, fill: "transparent", tabindex: 0}, svg);
+  const snap = cfg.snap;
+  const move = (evt) => {
+    const r = svg.getBoundingClientRect(); const px = (evt.clientX - r.left) * W / r.width;
+    let t = x0 + (px - m.l) / pw * (x1 - x0); t = Math.max(x0, Math.min(x1, t));
+    if (snap) t = snap[bisect(snap, t) > 0 && Math.abs(snap[bisect(snap, t) - 1] - t) < Math.abs(snap[bisect(snap, t)] - t) ? bisect(snap, t) - 1 : bisect(snap, t)];
+    cross.setAttribute("x1", X(t)); cross.setAttribute("x2", X(t)); cross.setAttribute("visibility", "visible");
+    showTip(box, evt, (tp) => {
+      div("hd", fmtT(t), tp);
+      const groups = cfg.tip === "group" ? {} : null;
+      for (const s of cfg.series) {
+        if (s.notip) continue; const v = valueAt(s, t);
+        if (groups) { (groups[s.group || s.name] ||= {color: s.color, name: s.group || s.name, vals: []}).vals.push(v); continue; }
+        const row = div("row", null, tp); const k = div("key", null, row); k.style.borderTopColor = s.color; k.style.borderTopStyle = s.dash ? "dashed" : "solid";
+        div("nm", s.name, row).style.flex = "1"; const b = document.createElement("b"); b.textContent = (cfg.tipfmt || cfg.yfmt || fmtN)(v); row.appendChild(b);
+      }
+      if (groups) for (const g of Object.values(groups)) {
+        const row = div("row", null, tp); const k = div("key", null, row); k.style.borderTopColor = g.color;
+        div("nm", g.name, row).style.flex = "1"; const mn = Math.min(...g.vals), mx = Math.max(...g.vals);
+        const f = cfg.tipfmt || cfg.yfmt || fmtN; const b = document.createElement("b");
+        b.textContent = mn === mx ? f(mn) : `${f(mn)} - ${f(mx)}`; row.appendChild(b);
+      }
+    });
+  };
+  ov.addEventListener("pointermove", move);
+  ov.addEventListener("focus", () => { const r = svg.getBoundingClientRect(); move({clientX: r.left + r.width / 2, clientY: r.top + 20}); });
+  ov.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  ov.addEventListener("blur", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  if (cfg.ytitle) { const yt = div("", cfg.ytitle, host); yt.style.cssText = "font-size:11px;color:var(--ink3);margin-top:2px"; }
+  tableView(host, cfg);
+}
+function tableView(host, cfg) {
+  const det = document.createElement("details"); const sm = document.createElement("summary"); sm.textContent = "Table view"; det.appendChild(sm);
+  det.addEventListener("toggle", () => {
+    if (!det.open || det.querySelector("table")) return;
+    const [x0, x1] = cfg.xdom, n = 10, ts = Array.from({length: n + 1}, (_, i) => x0 + (x1 - x0) * i / n);
+    const tb = document.createElement("table"), hr = tb.insertRow(); hr.appendChild(document.createElement("th")).textContent = "time";
+    const f = cfg.tipfmt || cfg.yfmt || fmtN;
+    for (const s of cfg.series) if (!s.notip) hr.appendChild(document.createElement("th")).textContent = s.name;
+    for (const t of ts) { const r = tb.insertRow(); r.insertCell().textContent = fmtT(t);
+      for (const s of cfg.series) if (!s.notip) r.insertCell().textContent = f(valueAt(s, t)); }
+    det.appendChild(tb);
+  });
+  host.appendChild(det);
+}
+
+/* ---------- build ---------- */
+let range = "window";
+const T = D.t;
+const xdom = () => range === "window" ? D.window : [D.t0, D.t1];
+const vlines = D.moments.filter(m => m.kind !== "obj");   // contact / mission / launch / detonation / loss markers
+const gFmt = (v) => v == null ? "-" : fmtN(v, 3);
+
+function shipSeries(key) {
+  return D.ships.map(s => ({id: s.id, name: s.id, group: s.faction, color: fcolor(s.faction), x: T, y: D.series[key][s.id], width: 1.4, opacity: .85}));
+}
+const facLegend = () => FACT.map(f => ({name: f, color: fcolor(f)}));
+
+function renderTime() {
+  const xd = xdom();
+  lineChart($("c-range"), {xdom: xd, vlines, ylog: range === "all", yzero: range === "all", yfmt: (v) => fmtKm(v), tipfmt: (v) => fmtKm(v) + ` (${fmtN(v / 299792.458, 3)} light-s)`,
+    ytitle: range === "all" ? "range, log scale" : "range, linear", snap: T, aria: "Range between factions over time",
+    legend: [{name: "closest hostile pair", color: css("--ink"), width: 2}, {name: "mean over hostile pairs", color: css("--ink3"), dash: true}],
+    series: [{name: "closest", x: T, y: D.series.range_min, color: css("--ink"), width: 2},
+             {name: "mean", x: T, y: D.series.range_mean, color: css("--ink3"), dash: true, width: 1.5}]});
+  const stepS = (obj, dash, label) => FACT.map(f => ({name: `${f} ${label}`, group: f, color: fcolor(f), x: obj[f].x, y: obj[f].y, step: true, dash, width: 2}));
+  lineChart($("c-cum"), {xdom: xd, vlines, height: 230, yfmt: (v) => fmtN(v, 4), ytitle: "missiles, cumulative", yzero: true,
+    legend: FACT.map(f => ({name: `${f} launched`, color: fcolor(f)})).concat(FACT.map(f => ({name: `${f} detonated`, color: fcolor(f), dash: true}))),
+    series: stepS(D.cum_launch, false, "launched").concat(stepS(D.cum_det, true, "detonated"))});
+  lineChart($("c-flight"), {xdom: xd, vlines, height: 230, yfmt: (v) => fmtN(v, 4), ytitle: "missiles in flight", legend: facLegend(),
+    series: FACT.map(f => ({name: f, color: fcolor(f), x: D.in_flight[f].x, y: D.in_flight[f].y, step: true, width: 2}))});
+  lineChart($("c-integrity"), {xdom: xd, vlines, ylog: true, ymin: 1e-6, tip: "all", snap: T, yfmt: (v) => fmtN(v, 3), ytitle: "integrity, log scale (1.0 = undamaged)",
+    legend: facLegend().concat([{name: `assumed dead (${D.dead_threshold})`, color: css("--ink3"), dash: true}]),
+    hlines: [{y: D.dead_threshold}], series: shipSeries("integrity")});
+  lineChart($("c-speed"), {xdom: xd, vlines, tip: "group", snap: T, height: 230, yfmt: (v) => fmtN(v, 4), tipfmt: (v) => fmtN(v, 4) + " km/s",
+    ytitle: "km/s", legend: facLegend(), series: shipSeries("speed")});
+  lineChart($("c-accel"), {xdom: xd, vlines, tip: "group", snap: T, height: 230, yfmt: (v) => fmtN(v, 4), tipfmt: (v) => fmtN(v, 4) + " g",
+    ytitle: "g", legend: facLegend(), series: shipSeries("accel")});
+}
+
+/* ---------- trajectory map ---------- */
+let view = "engagement";
+function viewBounds(v) {
+  let pts = [];
+  const ext = (x, y) => pts.push([x, y]);
+  if (v === "orbit" && D.orbits.length) {
+    const R = Math.max(...D.orbits.map(o => o.radius_km)) * 1.35; return [-R, R, -R, R];
+  }
+  if (v === "approach") {
+    for (const s of D.ships) for (const p of D.series.traj[s.id]) ext(p[0], p[1]); ext(0, 0);
+  } else {
+    const [a, b] = [D.window[0], D.window[1]];
+    for (const s of D.ships) { const tr = D.series.traj[s.id]; for (let i = 0; i < T.length; i++) if (T[i] >= a && T[i] <= b) ext(tr[i][0], tr[i][1]); }
+    for (const t of D.missile_tracks) for (const p of t.pts) ext(p[1], p[2]);
+    for (const d of D.detonations) ext(d.x_km, d.y_km);
+  }
+  let x0 = Math.min(...pts.map(p => p[0])), x1 = Math.max(...pts.map(p => p[0])), y0 = Math.min(...pts.map(p => p[1])), y1 = Math.max(...pts.map(p => p[1]));
+  const px = (x1 - x0) * .08 || 1000, py = (y1 - y0) * .08 || 1000;
+  return [x0 - px, x1 + px, y0 - py, y1 + py];
+}
+function renderTraj() {
+  const host = $("c-traj"); host.replaceChildren();
+  legend(host, FACT.map(f => ({name: `${f} ship track`, color: fcolor(f), width: 2})).concat(FACT.map(f => ({name: `${f} missile track`, color: fcolor(f), width: 1}))));
+  const box = div("chart", null, host);
+  const W = Math.max(300, box.clientWidth || 700), m = {l: 64, r: 12, t: 8, b: 28};
+  let [bx0, bx1, by0, by1] = viewBounds(view);
+  const avail = W - m.l - m.r, maxH = Math.min(560, Math.max(320, avail * .7));
+  const pw2 = avail, ph2 = maxH, stretch = view === "engagement";
+  let sx = (bx1 - bx0) / pw2, sy = (by1 - by0) / ph2;
+  if (!stretch) {                                   // equal aspect: same km per pixel on both axes
+    const sc = Math.max(sx, sy), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2; sx = sy = sc;
+    bx0 = cx - sc * pw2 / 2; bx1 = cx + sc * pw2 / 2; by0 = cy - sc * ph2 / 2; by1 = cy + sc * ph2 / 2;
+  }
+  const scale = sx, pw = pw2, ph = ph2, exag = sx / sy;
+  const H = m.t + ph2 + m.b;
+  const X = (x) => m.l + (x - bx0) / sx, Y = (y) => m.t + ph2 - (y - by0) / sy;
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Ship and missile tracks, " + (D.ref ? "centred on " + D.ref : "heliocentric")}, box);
+  const gg = el("g", {class: "grid"}, svg), ax = el("g", {class: "axis"}, svg);
+  for (const v of niceTicks(bx0, bx1, Math.floor(pw2 / 120))) { el("line", {x1: X(v), x2: X(v), y1: m.t, y2: m.t + ph2}, gg);
+    el("text", {x: X(v), y: H - 10, "text-anchor": "middle"}, ax).textContent = fmtKm(v).replace(" km", ""); }
+  for (const v of niceTicks(by0, by1, Math.floor(ph2 / 80))) { el("line", {x1: m.l, x2: m.l + pw2, y1: Y(v), y2: Y(v)}, gg);
+    el("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end"}, ax).textContent = fmtKm(v).replace(" km", ""); }
+  const cid = "tc" + Math.random().toString(36).slice(2); el("rect", {x: m.l, y: m.t, width: pw2, height: ph2}, el("clipPath", {id: cid}, svg));
+  const g = el("g", {"clip-path": `url(#${cid})`}, svg);
+  // central body
+  if (D.ref_radius_km) {
+    if (D.ref_exclusion_km) el("ellipse", {cx: X(0), cy: Y(0), rx: D.ref_exclusion_km / sx, ry: D.ref_exclusion_km / sy, fill: "none", stroke: css("--ink3"), "stroke-dasharray": "3 4"}, g);
+    el("ellipse", {cx: X(0), cy: Y(0), rx: Math.max(2, D.ref_radius_km / sx), ry: Math.max(2, D.ref_radius_km / sy), fill: css("--ink3"), opacity: .55}, g);
+    el("text", {x: X(0) + Math.max(6, D.ref_radius_km / sx + 4), y: Y(0) - 4, fill: css("--ink2"), "font-size": 11}, g).textContent = D.ref;
+  }
+  for (const o of D.orbits) el("ellipse", {cx: X(0), cy: Y(0), rx: o.radius_km / sx, ry: o.radius_km / sy, fill: "none", stroke: css("--ink3"), "stroke-width": 1, "stroke-dasharray": "1 4", opacity: .8}, g);
+  // missile tracks
+  for (const t of D.missile_tracks) {
+    const d = t.pts.map((p, i) => (i ? "L" : "M") + X(p[1]).toFixed(1) + " " + Y(p[2]).toFixed(1)).join("");
+    el("path", {d, fill: "none", stroke: fcolor(t.faction), "stroke-width": 1, opacity: .5}, g);
+  }
+  // ship tracks
+  const hits = [];
+  for (const s of D.ships) {
+    const tr = D.series.traj[s.id]; const step = Math.max(1, Math.floor(tr.length / 1500));
+    let d = ""; for (let i = 0; i < tr.length; i += step) d += (i ? "L" : "M") + X(tr[i][0]).toFixed(1) + " " + Y(tr[i][1]).toFixed(1);
+    el("path", {d, fill: "none", stroke: fcolor(s.faction), "stroke-width": 1.6, opacity: .9}, g);
+    const last = tr[tr.length - 1];
+    el("circle", {cx: X(last[0]), cy: Y(last[1]), r: 4.5, fill: fcolor(s.faction), stroke: css("--surface"), "stroke-width": 2}, g);
+    hits.push({x: X(last[0]), y: Y(last[1]), lines: [[s.id, ""], ["final integrity", fmtN(s.integrity, 3)], ["missiles fired", s.launched], ["hit by", s.hit_by]], color: fcolor(s.faction)});
+    const first = tr[0]; el("rect", {x: X(first[0]) - 3, y: Y(first[1]) - 3, width: 6, height: 6, fill: "none", stroke: fcolor(s.faction), "stroke-width": 1.5}, g);
+  }
+  for (const l of D.launches) { el("circle", {cx: X(l.x_km), cy: Y(l.y_km), r: 2.5, fill: "none", stroke: fcolor(l.faction), "stroke-width": 1}, g); }
+  for (const d of D.detonations) {
+    const x = X(d.x_km), y = Y(d.y_km), c = fcolor(d.faction);
+    el("path", {d: `M${x - 4} ${y - 4}L${x + 4} ${y + 4}M${x + 4} ${y - 4}L${x - 4} ${y + 4}`, stroke: c, "stroke-width": 1.5, fill: "none"}, g);
+    hits.push({x, y, color: c, lines: [[d.missile, ""], ["time", fmtT(d.t)], ["target", d.target], ["miss distance", fmtN(d.range_m, 3) + " m"], ["damage", fmtN(d.damage, 3)]]});
+  }
+  const ov = el("rect", {x: m.l, y: m.t, width: pw2, height: ph2, fill: "transparent"}, svg);
+  ov.addEventListener("pointermove", (evt) => {
+    const r = svg.getBoundingClientRect(), px = (evt.clientX - r.left) * W / r.width, py = (evt.clientY - r.top) * H / r.height;
+    let best = null, bd = 18 * 18;
+    for (const h of hits) { const dd = (h.x - px) ** 2 + (h.y - py) ** 2; if (dd < bd) { bd = dd; best = h; } }
+    if (!best) { hideTip(); return; }
+    showTip(box, evt, (tp) => { best.lines.forEach(([k, v], i) => { const row = div("row", null, tp);
+      if (i === 0) { const kk = div("key", null, row); kk.style.borderTopColor = best.color; div("nm", k, row); } else { div("nm", k, row).style.flex = "1"; const b = document.createElement("b"); b.textContent = v; row.appendChild(b); } }); });
+  });
+  ov.addEventListener("pointerleave", hideTip);
+  const ref = D.ref ? `Positions are relative to ${D.ref} (ecliptic plane, z ignored). ` : "Heliocentric positions (ecliptic plane, z ignored). ";
+  const cap = div("", (stretch ? `Vertical axis stretched ${exag.toFixed(1)}\u00d7 relative to horizontal so the engagement is readable (distances along y are not to scale). ` : "") + ref + "Square = start, dot = final position, circle = missile launch, × = detonation (coloured by the firing faction). Dotted rings: planned orbits.", host);
+  cap.style.cssText = "font-size:11px;color:var(--ink3);margin-top:2px";
+}
+
+/* ---------- matrix & histogram ---------- */
+function renderMatrix() {
+  const host = $("c-matrix"); host.replaceChildren();
+  const rows = [...new Set(D.matrix.map(c => c.launcher))], cols = [...new Set(D.matrix.map(c => c.target))];
+  if (!rows.length) { div("", "No missiles were launched.", host); return; }
+  const box = div("chart", null, host);
+  const W = Math.max(300, box.clientWidth || 440), left = 112, top = 96, cs = Math.min(46, (W - left - 8) / cols.length), H = top + rows.length * cs + 6;
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Missiles launched by firing ship and target ship"}, box);
+  const maxN = Math.max(...D.matrix.map(c => c.launched));
+  const ramp = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map(css);
+  cols.forEach((c, j) => { const t = el("text", {x: left + j * cs + cs / 2, y: top - 6, "text-anchor": "start", fill: css("--ink2"), "font-size": 11, transform: `rotate(-45 ${left + j * cs + cs / 2} ${top - 6})`}, svg); t.textContent = c; });
+  rows.forEach((r, i) => { el("text", {x: left - 6, y: top + i * cs + cs / 2 + 4, "text-anchor": "end", fill: css("--ink2"), "font-size": 11}, svg).textContent = r;
+    cols.forEach((c, j) => {
+      const cell = D.matrix.find(x => x.launcher === r && x.target === c); const n = cell ? cell.launched : 0;
+      const lvl = n ? Math.min(4, Math.floor(n / maxN * 4.999)) : -1;
+      const rc = el("rect", {class: "cellrect", x: left + j * cs + 1, y: top + i * cs + 1, width: cs - 2, height: cs - 2, rx: 3, fill: lvl < 0 ? "transparent" : ramp[lvl], stroke: lvl < 0 ? css("--border") : "none", tabindex: 0}, svg);
+      if (n) { const tx = el("text", {x: left + j * cs + cs / 2, y: top + i * cs + cs / 2 + 4, "text-anchor": "middle", "font-size": 12, "font-weight": 600, fill: lvl >= 2 ? "#fff" : css("--ink"), "pointer-events": "none"}, svg); tx.textContent = n; }
+      const show = (evt) => showTip(box, evt, (tp) => { div("hd", `${r} → ${c}`, tp);
+        for (const [k, v] of [["launched", n], ["detonated", cell ? cell.n : 0], ["mean damage", cell ? fmtN(cell.mean_damage, 3) : "-"]]) { const row = div("row", null, tp); div("nm", k, row).style.flex = "1"; const b = document.createElement("b"); b.textContent = v; row.appendChild(b); } });
+      rc.addEventListener("pointermove", show); rc.addEventListener("pointerleave", hideTip);
+      rc.addEventListener("focus", () => { const q = rc.getBoundingClientRect(); show({clientX: q.left + q.width, clientY: q.top}); }); rc.addEventListener("blur", hideTip);
+    }); });
+}
+function renderMiss() {
+  const host = $("c-miss"); host.replaceChildren();
+  if (!D.detonations.length) { div("", "No detonations.", host); return; }
+  legend(host, facLegend().map(l => ({...l, name: l.name + " warheads"})));
+  const box = div("chart", null, host);
+  const vals = D.detonations.map(d => Math.max(d.range_m, 0.01)), lo = Math.floor(Math.log10(Math.min(...vals)) * 2) / 2, hi = Math.ceil(Math.log10(Math.max(...vals)) * 2) / 2 || lo + .5;
+  const nb = Math.max(1, Math.round((hi - lo) / .5)), bins = FACT.map(() => Array(nb).fill(0));
+  for (const d of D.detonations) { const b = Math.min(nb - 1, Math.floor((Math.log10(Math.max(d.range_m, .01)) - lo) / .5)); bins[Math.max(0, FACT.indexOf(d.faction))][b]++; }
+  const W = Math.max(300, box.clientWidth || 440), H = 230, m = {l: 40, r: 8, t: 8, b: 40}, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const mx = Math.max(1, ...bins.flat()), ticks = niceTicks(0, mx, 4), top = Math.max(mx, ticks[ticks.length - 1]);
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Histogram of detonation miss distance"}, box);
+  const gg = el("g", {class: "grid"}, svg), ax = el("g", {class: "axis"}, svg), Y = (v) => m.t + ph - v / top * ph;
+  for (const v of ticks) { el("line", {x1: m.l, x2: m.l + pw, y1: Y(v), y2: Y(v)}, gg); el("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end"}, ax).textContent = v; }
+  const bw = pw / nb, gw = bw / FACT.length;
+  for (let b = 0; b < nb; b++) {
+    const a = Math.pow(10, lo + b * .5), z = Math.pow(10, lo + (b + 1) * .5);
+    el("text", {x: m.l + b * bw + bw / 2, y: H - 22, "text-anchor": "middle"}, ax).textContent = fmtN(a, 2);
+    FACT.forEach((f, k) => { const v = bins[k][b], h = v / top * ph; if (!v) return;
+      const r = el("rect", {class: "bar", x: m.l + b * bw + k * gw + 1, y: Y(v), width: Math.max(2, gw - 2), height: h, rx: 3, fill: fcolor(f), tabindex: 0}, svg);
+      const show = (evt) => showTip(box, evt, (tp) => { div("hd", `${fmtN(a, 3)} - ${fmtN(z, 3)} m`, tp); const row = div("row", null, tp); const kk = div("key", null, row); kk.style.borderTopColor = fcolor(f); div("nm", f, row).style.flex = "1"; const bb = document.createElement("b"); bb.textContent = v + " warheads"; row.appendChild(bb); });
+      r.addEventListener("pointermove", show); r.addEventListener("pointerleave", hideTip); r.addEventListener("focus", () => { const q = r.getBoundingClientRect(); show({clientX: q.right, clientY: q.top}); }); r.addEventListener("blur", hideTip); });
+  }
+  el("text", {x: m.l + pw / 2, y: H - 4, "text-anchor": "middle", class: "title"}, ax).textContent = "miss distance, metres (log bins)";
+  const med = [...vals].sort((a, b) => a - b)[Math.floor(vals.length / 2)];
+  const cap = div("", `Median miss distance ${fmtN(med, 3)} m over ${vals.length} detonations.`, host); cap.style.cssText = "font-size:11px;color:var(--ink3);margin-top:2px";
+}
+
+/* ---------- static parts ---------- */
+function buildStatic() {
+  $("title").textContent = D.scenario + " — after-action report";
+  $("subtitle").textContent = `seed ${D.seed} · simulator ${D.version} · ${fmtT(D.t0)} to ${fmtT(D.t1)} · ${D.ships.length} ships`;
+  $("note").textContent = "Weapon yield, damage curve and firing doctrine are placeholder values (see docs/OPEN_QUESTIONS.md), and damage does not yet reduce ship capability. Read this report as a view of the mechanics, not as a canon outcome.";
+  const cards = $("cards");
+  for (const f of FACT) {
+    const ss = D.ships.filter(s => s.faction === f), escaped = ss.filter(s => s.departed_t != null).length,
+      alive = ss.filter(s => s.kill_t == null && s.departed_t == null).length;
+    const fired = D.launches.filter(l => l.faction === f).length, dets = D.detonations.filter(d => d.faction === f), hits = dets.filter(d => d.damage > 0).length;
+    const c = div("card", null, cards), h = document.createElement("h3"); const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = fcolor(f);
+    h.appendChild(dot); h.appendChild(document.createTextNode(f)); c.appendChild(h);
+    const kv = div("kv", null, c);
+    const rowsKV = [["ships surviving", `${alive} / ${ss.length}`]].concat(escaped ? [["escaped via hyper limit", escaped]] : []).concat([["missiles launched", fired], ["warheads damaging a target", `${hits} / ${dets.length}`],
+      ["damage dealt (sum)", fmtN(dets.reduce((a, d) => a + d.damage, 0), 4)], ["worst surviving integrity", fmtN(Math.min(...ss.map(s => s.integrity)), 3)]]);
+    for (const [k, v] of rowsKV) { div("", k, kv); div("", String(v), kv); }
+  }
+  const ul = $("moments");
+  for (const mo of D.moments) { const li = document.createElement("li"); const a = div("t", fmtT(mo.t), li); a.classList.add("mono"); div("", mo.label, li); ul.appendChild(li); }
+  const tb = document.createElement("table"); const hr = tb.insertRow();
+  for (const h of ["ship", "faction", "class", "missiles fired", "hits taken", "final integrity", "lost / departed"]) hr.appendChild(document.createElement("th")).textContent = h;
+  for (const s of D.ships) { const r = tb.insertRow();
+    [s.id, s.faction, s.class, s.launched, s.hit_by, fmtN(s.integrity, 3), s.departed_t != null ? "departed " + fmtT(s.departed_t) : s.kill_t == null ? "-" : fmtT(s.kill_t)].forEach((v, i) => { const c = r.insertCell(); c.textContent = v; }); }
+  $("ships").appendChild(tb);
+  if (D.warnings.length) { $("warnpanel").style.display = ""; for (const w of D.warnings) { const li = document.createElement("li"); li.textContent = w; $("warns").appendChild(li); } }
+  $("speed-sub").textContent = D.ref ? `Relative to ${D.ref}, km/s. Hover shows the range across each faction's ships.` : "Heliocentric, km/s.";
+  $("traj-sub").textContent = "Top-down plot of the whole action. Switch between the long approach, the engagement area (where the missiles fly) and the orbit region.";
+  const vb = $("viewbtns");
+  const views = [["approach", "Approach"], ["engagement", "Engagement"]].concat(D.orbits.length ? [["orbit", "Orbit region"]] : []);
+  for (const [k, label] of views) { const b = document.createElement("button"); b.className = "seg"; b.textContent = label; b.dataset.view = k; b.setAttribute("aria-pressed", k === view);
+    b.onclick = () => { view = k; vb.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.dataset.view === k)); renderTraj(); }; vb.appendChild(b); }
+}
+document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => {
+  range = b.dataset.range; document.querySelectorAll("[data-range]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderTime(); });
+
+function renderAll() { renderTime(); renderTraj(); renderMatrix(); renderMiss(); }
+const hp = new URLSearchParams(location.hash.slice(1));
+if (hp.get("range") === "all") { range = "all"; document.querySelectorAll("[data-range]").forEach(x => x.setAttribute("aria-pressed", x.dataset.range === "all")); }
+buildStatic();
+if (["approach", "engagement", "orbit"].includes(hp.get("view"))) { view = hp.get("view"); $("viewbtns").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.dataset.view === view)); }
+renderAll();
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(renderAll, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { buildStaticColors(); renderAll(); });
+function buildStaticColors() { document.querySelectorAll(".card h3 .dot").forEach((d, i) => d.style.background = fcolor(FACT[i])); }
+</script>
+</body>
+</html>
