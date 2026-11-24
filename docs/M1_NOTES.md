@@ -103,4 +103,16 @@ engagement:
 - A *departing* ship that reaches `cfg.hyper_limit_m` from the primary star emits `hyper_departure` (and
   `objective_complete`), is frozen in place, flagged `departed` in snapshots, ignored by sensors, fire control and
   missile impact tests (`SensorNet.departed` and the swarm's alive mask). Missiles already chasing it coast on.
-- Not implemented: arrival at the limit, or leaving via a rule (`withdraw`) rather than an objective.
+- Not implemented: arrival at the limit.
+- Leaving via a rule is the `withdraw` action (docs/MISSIONS.md); it reuses this mechanic.
+
+## Withdrawal, strength and orbit objectives
+
+- `simulator/doctrine/registry.py` declares the conditions and actions; `escape.py` plans a route to the hyper limit that
+  stays outside hostile missile envelopes and returns the escape margin; `mission.py` evaluates rules and applies
+  engage / withdraw behaviours.
+- Ship `mass_kg` (tons) feeds `force_ratio_over`; missile powered reach feeds the hostile envelope.
+- A `transit_to_orbit` objective is now satisfied immediately if the ship is already on that orbit (previously a ship
+  starting in orbit braked to rest first). `reset_objective` re-establishes the orbit after a sortie or an abandoned
+  withdrawal.
+- `scenarios/incursion02.yaml`: five Reliants (cautious_defender) against three Majestics.

@@ -32,6 +32,16 @@
   input[type=checkbox] { accent-color: var(--hi); }
   #info div { display: flex; justify-content: space-between; gap: 8px; }
   #info span:first-child { color: var(--dim); }
+  #fleet { max-height: 340px; overflow-y: auto; }
+  #fleet .fac { display: flex; justify-content: space-between; margin: 6px 0 2px; font-weight: 600; }
+  #fleet .ship { display: grid; grid-template-columns: 128px 1fr 36px; align-items: center; gap: 6px; padding: 1px 2px; cursor: pointer; border-radius: 2px; }
+  #fleet .ship:hover, #fleet .ship.sel { background: #10242c; }
+  #fleet .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #fleet .bar { height: 8px; background: var(--grid); border-radius: 2px; overflow: hidden; }
+  #fleet .bar i { display: block; height: 100%; }
+  #fleet .val { text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #fleet .ship.dead .nm, #fleet .ship.gone .nm { color: var(--dim); text-decoration: line-through; }
+  #fleet .ship.dead .val { color: var(--warn); } #fleet .ship.gone { opacity: .55; }
   #events { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); }
   #events div { padding: 2px 6px; cursor: pointer; border-bottom: 1px solid var(--grid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #events div:hover { background: #10242c; }
@@ -78,7 +88,7 @@
     <h3>View</h3>
     <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
       <select id="follow" title="centre on"></select>
-      <button id="fitShips">Fit ships</button>
+      <button id="fitShips" title="keep every ship on screen, panning and zooming automatically (drag, wheel or follow turns it off)">Fit ships</button>
       <button id="fitSys">Fit system</button>
     </div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">Perspective
@@ -101,6 +111,10 @@
     <label><input type="checkbox" id="oEnv" checked> missile envelope &amp; hyper limit</label>
     <label><input type="checkbox" id="oGrid" checked> grid</label>
     <label><input type="checkbox" id="oTruth"> truth ghosts in faction view</label>
+  </section>
+  <section>
+    <h3>Fleet status</h3>
+    <div id="fleet"></div>
   </section>
   <section>
     <h3>Selected</h3>
@@ -141,6 +155,7 @@ async function loadFromUrl(run) {
     ["metadata.json", "state.jsonl", "events.jsonl"].map(f => fetch(new URL(f, base)).then(r => { if (!r.ok) throw new Error(f + ": HTTP " + r.status); return r.text(); })));
   const missiles = await fetch(new URL("missiles.jsonl", base)).then(r => r.ok ? r.text() : "").catch(() => "");   // optional
   init(JSON.parse(meta), parseJsonl(state), parseJsonl(events), parseJsonl(missiles));
+  const q = new URLSearchParams(location.search); if (q.get("t")) seek(+q.get("t")); if (q.get("fit")) fitShips();      // ?t=seconds opens at that time
 }
 async function loadFromFiles(list) {
   const by = {};
@@ -167,7 +182,7 @@ function init(meta, rows, events, missileRows) {
   const info = {}; for (const o of meta.objects) info[o.id] = o;
   const objs = ids.map((id, oi) => {
     const o = { id, kind: rows[0].objects[oi].kind, meta: info[id] || {}, pos: new Float64Array(3 * n), vel: new Float64Array(3 * n),
-      acc: new Float64Array(3 * n), q: new Float64Array(4 * n), integ: new Float32Array(n).fill(1) };
+      acc: new Float64Array(3 * n), q: new Float64Array(4 * n), integ: new Float32Array(n).fill(1), dead: new Uint8Array(n), gone: new Uint8Array(n) };
     return o;
   });
   rows.forEach((r, k) => r.objects.forEach((s, oi) => {
@@ -177,6 +192,8 @@ function init(meta, rows, events, missileRows) {
     if (s.acceleration_m_s2) o.acc.set(s.acceleration_m_s2, 3 * k);
     if (s.orientation_xyzw) o.q.set(s.orientation_xyzw, 4 * k);
     if (s.integrity !== undefined) o.integ[k] = s.integrity;
+    if (s.destroyed) o.dead[k] = 1;
+    if (s.departed) o.gone[k] = 1;
   }));
   const t = Float64Array.from(rows.map(r => r.t));
   const tracks = rows.map(r => r.tracks || null);
@@ -185,12 +202,12 @@ function init(meta, rows, events, missileRows) {
         tEnd: t[n - 1], trailCache: {} };
   D.groups = {}; for (const s of D.ships) (D.groups[s.meta.group] = D.groups[s.meta.group] || []).push(s);
   $("scn").textContent = `${meta.scenario_id} · seed ${meta.random_seed} · ${D.ships.length} ships · ${meta.warnings.length} config warning(s)`;
-  buildControls(); buildEvents(); $("load").classList.add("hidden");
+  buildControls(); buildEvents(); buildFleet(); $("load").classList.add("hidden");
   P.t = 0; fitShips(); resize();
   const orb = meta.orbits || [];
   if (orb.length) {        // orbit scenarios: open in the frame of the body so the orbits are visible
     const body = orb[0].body, rmax = Math.max(...orb.filter(x => x.body === body).map(x => x.radius_m));
-    V.follow = "o:" + body; $("follow").value = V.follow;
+    stopAutofit(); V.follow = "o:" + body; $("follow").value = V.follow;
     V.scale = 2.7 * rmax / Math.min(cv.clientWidth, cv.clientHeight);
   }
   requestAnimationFrame(frame);
@@ -220,7 +237,7 @@ function stateAt(o, t) {
     const n = Math.hypot(...q) || 1; const [x, y, z, w] = q.map(c => c / n);
     fwd = [1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)];
   }
-  return { p, v, a, fwd, integ: o.integ ? o.integ[k] : 1 };
+  return { p, v, a, fwd, integ: o.integ ? o.integ[k] : 1, dead: !!(o.dead && o.dead[k]), gone: !!(o.gone && o.gone[k]) };
 }
 
 // ---------------------------------------------------------------- UI setup
@@ -280,7 +297,7 @@ $("back10").onclick = () => D && seek(P.t - 10);
 $("fwd10").onclick = () => D && seek(P.t + 10);
 $("speed").onchange = e => P.speed = +e.target.value;
 $("scrub").oninput = e => { P.t = +e.target.value; };
-$("follow").onchange = e => { V.follow = e.target.value; };
+$("follow").onchange = e => { V.follow = e.target.value; stopAutofit(); };
 $("fitShips").onclick = () => fitShips();
 $("fitSys").onclick = () => fitSystem();
 addEventListener("keydown", e => {
@@ -318,11 +335,29 @@ function frameVel(t) {
   const v = [0, 0, 0]; for (const o of src) { const s = stateAt(o, t).v; for (let i = 0; i < 3; i++) v[i] += s[i] / src.length; }
   return v;
 }
+// Fit ships: a mode, not a one-shot. Every frame the camera is re-framed around the ships still in play
+// (departed ones are ignored), zooming out at once when someone would leave the screen and easing in otherwise.
 function fitShips() {
-  // frame the Sun and every ship at the current time, then leave the camera free
-  fitPoints([[0, 0], ...D.ships.map(s => stateAt(s, P.t).p)]);
+  V.autofit = true; $("fitShips").classList.add("on");
+  autoFit(true);
+}
+function stopAutofit() { V.autofit = false; $("fitShips").classList.remove("on"); }
+function autoFit(snap) {
+  const live = D.ships.map(s => stateAt(s, P.t)).filter(st => !st.gone);
+  const pts = (live.length ? live : D.ships.map(s => stateAt(s, P.t))).map(st => st.p);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const W = cv.clientWidth, H = cv.clientHeight, margin = 70;                     // px kept clear around the edge
+  const need = Math.max((x1 - x0) / Math.max(W - 2 * margin, 50), (y1 - y0) / Math.max(H - 2 * margin, 50), 1e4 / 50);
+  V.follow = "free"; $("follow").value = "free";
+  const tx = (x0 + x1) / 2, ty = (y0 + y1) / 2;
+  if (snap) { V.scale = need; V.cx = tx; V.cy = ty; return; }
+  V.scale = need > V.scale ? need : V.scale * Math.pow(need / V.scale, 0.08);     // out: immediate; in: eased
+  const a = need > V.scale * 0.999 ? 1 : 0.15;
+  V.cx += (tx - V.cx) * a; V.cy += (ty - V.cy) * a;
 }
 function fitSystem() {
+  stopAutofit();
   V.follow = "sun"; $("follow").value = "sun";
   let r = 0; for (const b of D.bodies) r = Math.max(r, Math.hypot(...stateAt(b, P.t).p));
   for (const s of D.ships) r = Math.max(r, Math.hypot(...stateAt(s, P.t).p));
@@ -343,11 +378,11 @@ cv.addEventListener("pointermove", e => {
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-  if (drag.moved) { V.follow = "free"; $("follow").value = "free"; V.cx = drag.cx - dx * V.scale; V.cy = drag.cy + dy * V.scale; }
+  if (drag.moved) { stopAutofit(); V.follow = "free"; $("follow").value = "free"; V.cx = drag.cx - dx * V.scale; V.cy = drag.cy + dy * V.scale; }
 });
 cv.addEventListener("pointerup", e => { if (drag && !drag.moved) pick(e.offsetX, e.offsetY); drag = null; });
 cv.addEventListener("wheel", e => {
-  e.preventDefault();
+  e.preventDefault(); stopAutofit();
   const k = Math.exp(e.deltaY * 0.0015);
   const wx = V.cx + (e.offsetX - cv.clientWidth / 2) * V.scale, wy = V.cy - (e.offsetY - cv.clientHeight / 2) * V.scale;
   V.scale *= k;
@@ -365,6 +400,7 @@ function pick(px, py) {
 
 // ---------------------------------------------------------------- drawing
 function niceStep(target) { const p = Math.pow(10, Math.floor(Math.log10(target))); const m = target / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+const HULK = "#b8c0c8";
 function factionColor(f) { return f === "red" ? css("--red") : f === "blue" ? css("--blue") : css("--other"); }
 const BODY_COL = { star: "#ffd76a", planet: "#7fb8d6", moon: "#8a9aa3", dwarf_planet: "#a48fbf", asteroid: "#7d7466" };
 
@@ -415,6 +451,7 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = css("--bg"); ctx.fillRect(0, 0, W, H);
   if (!D) return;
+  if (V.autofit) autoFit(false);
   if (V.follow !== "free") { const [fx, fy] = followPos(P.t); V.cx = fx; V.cy = fy; }
   const persp = $("persp").value, showTruth = $("oTruth").checked;
   const horizon = +$("horizon").value, trailSpan = +$("trail").value;
@@ -446,7 +483,8 @@ function draw() {
   const trk = D.tracks[k];
   for (const s of D.ships) {
     const st = stateAt(s, P.t), [sx, sy] = toScr(st.p[0], st.p[1]);
-    const fac = s.meta.faction, col = factionColor(fac), amax = s.meta.max_acceleration_m_s2 || 1;
+    const fac = s.meta.faction, amax = s.meta.max_acceleration_m_s2 || 1;
+    const col = st.dead ? HULK : factionColor(fac);       // hulks are light gray: out of action
     let asGhost = false;
     if (persp !== "truth" && fac !== persp) asGhost = true;
     if ($("oTrails").checked && trailSpan > 0 && (!asGhost || showTruth)) {
@@ -480,14 +518,14 @@ function draw() {
       if (r > 3) { ctx.strokeStyle = col + "55"; ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke(); }
       if (r > 14 && V.selected === s.id && $("oLabels").checked) { ctx.fillStyle = col + "aa"; ctx.fillText(`min separation ${fmtDist(D.meta.min_ship_separation_m)}`, sx + r * 0.71 + 3, sy + r * 0.71 + 10); }
     }
-    ctx.globalAlpha = 0.3 + 0.7 * st.integ;                   // damaged ships fade
-    glyphShip(sx, sy, st.fwd, col, false, 7);
+    ctx.globalAlpha = st.gone ? 0.25 : st.dead ? 0.7 : 0.3 + 0.7 * st.integ;   // damaged ships fade; hulks are hollow
+    glyphShip(sx, sy, st.fwd, col, st.dead, 7);
     ctx.globalAlpha = 1;
     if (V.selected === s.id) { ctx.strokeStyle = css("--hi"); ctx.beginPath(); ctx.arc(sx, sy, 12, 0, 7); ctx.stroke(); }
     if ($("oLabels").checked) {
       const g = s.meta.group; ctx.fillStyle = col;
       const spread = V.scale < 2e4;    // when zoomed in show each ship; otherwise one label per group
-      const dmg = st.integ < 0.9995 ? ` ▮${st.integ.toFixed(2)}` : "";
+      const dmg = st.dead ? " ✕ destroyed" : st.gone ? " (departed)" : st.integ < 0.9995 ? ` ▮${st.integ.toFixed(2)}` : "";
       if (spread) ctx.fillText(s.id.replace(/^.*_group-/, g + " #") + dmg, sx + 10, sy + 4);
       else if (!groupDrawn[g]) { groupDrawn[g] = 1; ctx.fillText(`${g} ×${D.groups[g].length}`, sx + 10, sy - 8); }
     }
@@ -614,6 +652,38 @@ function updateInfo() {
   el.innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("");
 }
 
+// ---------------------------------------------------------------- fleet status (real time)
+let fleetRows = null;
+function buildFleet() {
+  const el = $("fleet"); el.innerHTML = ""; fleetRows = {}; fleetHead = {};
+  const facs = {}; for (const s of D.ships) (facs[s.meta.faction] = facs[s.meta.faction] || []).push(s);
+  for (const [f, ships] of Object.entries(facs)) {
+    const h = document.createElement("div"); h.className = "fac"; h.style.color = factionColor(f);
+    h.innerHTML = `<span>${f}</span><span></span>`; el.appendChild(h); fleetHead[f] = h.lastChild;
+    for (const s of ships) {
+      const r = document.createElement("div"); r.className = "ship"; r.title = s.id;
+      r.innerHTML = `<span class="nm">${s.id.replace(s.meta.group + "-", s.meta.group.replace(/^(red|blue)_/, "") + " ")}</span><span class="bar"><i style="background:${factionColor(f)}"></i></span><span class="val"></span>`;
+      r.onclick = () => { V.selected = s.id; };
+      el.appendChild(r); fleetRows[s.id] = { r, bar: r.querySelector("i"), val: r.querySelector(".val") };
+    }
+  }
+}
+let fleetHead = {};
+function updateFleet() {
+  const alive = {}, total = {};
+  for (const s of D.ships) {
+    const st = stateAt(s, P.t), f = s.meta.faction, w = fleetRows[s.id]; if (!w) continue;
+    total[f] = (total[f] || 0) + 1; if (!st.dead && !st.gone) alive[f] = (alive[f] || 0) + 1;
+    const pct = Math.max(0, Math.min(1, st.integ));
+    w.bar.style.width = (pct * 100).toFixed(1) + "%"; w.bar.style.opacity = st.dead || st.gone ? .6 : 1;
+    w.bar.style.background = st.dead ? HULK : factionColor(f);
+    w.val.textContent = st.dead ? "dead" : st.gone ? "gone" : pct.toFixed(2);
+    w.r.className = "ship" + (st.dead ? " dead" : st.gone ? " gone" : "") + (V.selected === s.id ? " sel" : "");
+    w.r.title = `${s.id} · ${s.meta.class} · integrity ${st.integ.toFixed(3)}${st.gone ? " · departed via hyper limit" : ""}`;
+  }
+  for (const f in fleetHead) fleetHead[f].textContent = `${alive[f] || 0} / ${total[f]} active`;
+}
+
 // ---------------------------------------------------------------- loop
 let last = performance.now();
 function frame(now) {
@@ -622,7 +692,7 @@ function frame(now) {
     if (P.playing) { P.t += dt * P.speed; if (P.t >= D.tEnd) { P.t = D.tEnd; P.playing = false; } $("scrub").value = P.t; }
     $("play").textContent = P.playing ? "⏸ Pause" : "▶ Play"; $("play").classList.toggle("on", P.playing);
     $("clock").textContent = fmtClock(P.t) + "  ·  " + P.speed + "×";
-    draw(); drawStrip(); updateInfo();
+    draw(); drawStrip(); updateInfo(); updateFleet();
   }
   requestAnimationFrame(frame);
 }

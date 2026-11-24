@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from .doctrine import registry
 from .errors import ConfigError
 from .units import C, DAY_S, G0, KM, deg, pick_vector
 
@@ -16,8 +17,6 @@ OBJECTIVE_TYPES = {"coast", "hold_position", "transit_to_point", "transit_to_orb
 DIRECTIONS = {"prograde": 1.0, "retrograde": -1.0}
 FORMATIONS = {"none", "line_abreast"}
 TERMINATIONS = {"duration_reached", "all_objectives_complete", "scripted_stop"}
-POSTURES = {"closing", "fleeing", "holding"}                  # classification of a hostile track (see docs/MISSIONS.md)
-REACTION_ACTIONS = {"engage", "pursue", "ignore", "resume_objective"}
 
 
 @dataclass
@@ -277,70 +276,141 @@ def _parse_engagement(spec, cls, missiles, where, doctrine):
     return out
 
 
-def _parse_reaction(r, where, defaults):
-    """Validate one reaction rule and normalise it to SI: {when:{hostile,max_range_m}, do:{action,...}}."""
-    if not isinstance(r, dict) or set(r) - {"when", "do", "note"}:
-        raise ValueError(f"{where}: a reaction is a mapping with 'when' and 'do' keys")
-    when, do = r.get("when"), r.get("do")
-    if not isinstance(when, dict) or set(when) - {"hostile", "max_range_km"} or "hostile" not in when:
-        raise ValueError(f"{where}.when: expected {{hostile: closing|fleeing|holding|any[, max_range_km: N]}}")
-    if when["hostile"] != "any" and when["hostile"] not in POSTURES:
-        raise ValueError(f"{where}.when.hostile: {when['hostile']!r} not in {sorted(POSTURES | {'any'})}")
-    out_when = {"hostile": when["hostile"]}
-    if "max_range_km" in when:
-        out_when["max_range_m"] = float(when["max_range_km"]) * KM
+def _parse_when(when, where):
+    """Normalise a rule's `when` to {hostile, max_range_m, all: [(gate, value)], any: [(gate, value)]}."""
+    if isinstance(when, list):                         # a list of one-key mappings means "all of these"
+        merged = {}
+        for item in when:
+            if not isinstance(item, dict) or len(item) != 1 or next(iter(item)) in merged:
+                raise ValueError(f"{where}: a list of conditions needs one-key mappings, each condition once")
+            merged.update(item)
+        when = merged
+    if not isinstance(when, dict) or not when:
+        raise ValueError(f"{where}: expected a mapping of conditions, e.g. {{hostile: closing, force_ratio_over: 2}}")
+    out = {"hostile": "any", "all": [], "any": []}
+    known = sorted(list(registry.FILTERS) + list(registry.GATES) + ["any"])
+    for key, val in when.items():
+        if key == "any":
+            if not isinstance(val, list) or not val:
+                raise ValueError(f"{where}.any: expected a non-empty list of one-key conditions")
+            for k, item in enumerate(val):
+                if not isinstance(item, dict) or len(item) != 1 or next(iter(item)) not in registry.GATES:
+                    raise ValueError(f"{where}.any[{k}]: expected one condition, one of {sorted(registry.GATES)}")
+                (g, v), = item.items()
+                out["any"].append((g, registry.validate_value(registry.GATES[g], v, f"{where}.any[{k}].{g}")))
+        elif key in registry.FILTERS:
+            v = registry.validate_value(registry.FILTERS[key], val, f"{where}.{key}")
+            if key == "hostile":
+                out["hostile"] = v
+            else:
+                out["max_range_m"] = v * KM
+        elif key in registry.GATES:
+            out["all"].append((key, registry.validate_value(registry.GATES[key], val, f"{where}.{key}")))
+        else:
+            raise ValueError(f"{where}: unknown condition {key!r}; known: {known}")
+    return out
+
+
+def _parse_do(do, where, defaults):
     if isinstance(do, str):
         do = {do: {}}
     if not isinstance(do, dict) or len(do) != 1:
-        raise ValueError(f"{where}.do: expected an action name or a one-key mapping, one of {sorted(REACTION_ACTIONS)}")
+        raise ValueError(f"{where}.do: expected an action name or a one-key mapping, one of {sorted(registry.ACTIONS)}")
     (action, params), = do.items()
     params = params or {}
-    if action not in REACTION_ACTIONS or not isinstance(params, dict):
-        raise ValueError(f"{where}.do: unknown action {action!r}; known actions: {sorted(REACTION_ACTIONS)}")
-    out = {"action": action}
-    if action in ("engage", "pursue"):
-        bad = set(params) - {"standoff_km", "max_range_km", "max_km"}
-        if bad:
-            raise ValueError(f"{where}.do.{action}: unknown parameter(s) {sorted(bad)}")
-        out["standoff_m"] = float(params.get("standoff_km", defaults["default_standoff_km"])) * KM
-        cap = params.get("max_range_km", params.get("max_km"))
-        if action == "pursue" and cap is None:
-            raise ValueError(f"{where}.do.pursue: needs max_km (the range beyond which the chase is abandoned)")
-        if cap is not None:
-            out["max_range_m"] = float(cap) * KM
-        if out["standoff_m"] <= 0:
-            raise ValueError(f"{where}.do.{action}.standoff_km: must be > 0")
+    if action not in registry.ACTIONS or not isinstance(params, dict):
+        raise ValueError(f"{where}.do: unknown action {action!r}; known actions: {sorted(registry.ACTIONS)}")
+    specs = registry.ACTIONS[action]["params"]
+    bad = set(params) - set(specs)
+    if bad:
+        raise ValueError(f"{where}.do.{action}: unknown parameter(s) {sorted(bad)}; known: {sorted(specs)}")
+    out = {"action": action, "label": action}
+    for name, spec in specs.items():
+        if name in params:
+            val = registry.validate_value(spec, params[name], f"{where}.do.{action}.{name}")
+        elif spec.get("required"):
+            raise ValueError(f"{where}.do.{action}: needs {name}")
+        elif "default_from" in spec:
+            val = float(defaults["default_standoff_km"])
+        elif "default" in spec:
+            val = spec["default"]
+        else:
+            continue
+        k, v = registry.si_key(name, val, spec)
+        out[k] = v
+    if action == "pursue":                               # pursue = engage that is abandoned beyond max_km
+        out["max_range_m"] = out.pop("max_m")
         out["action"] = "engage"
-        out["label"] = action
-    elif params:
-        raise ValueError(f"{where}.do.{action}: takes no parameters")
-    return {"when": out_when, "do": out}
+    elif action == "resume_objective":
+        out["action"] = "ignore"
+    return out
 
 
-def _parse_mission(spec, doctrine, where):
-    """Validate a group's `mission:` block. Returns {reactions: [...], profile: name|None}.
+def _parse_reaction(r, where, defaults):
+    """Validate one reaction rule and normalise it to SI: {when: {...}, do: {action, ...}}."""
+    if not isinstance(r, dict) or set(r) - {"when", "do", "note"}:
+        raise ValueError(f"{where}: a reaction is a mapping with 'when' and 'do' keys")
+    if "when" not in r or "do" not in r:
+        raise ValueError(f"{where}: a reaction needs both 'when' and 'do'")
+    return {"when": _parse_when(r["when"], where + ".when"), "do": _parse_do(r["do"], where, defaults)}
 
-    Scenario `reactions` are evaluated before the named profile's, so a scenario can override a profile."""
+
+def _substitute(x, params, where):
+    """Replace "$name" strings in a profile's rules with the profile's (possibly overridden) parameters."""
+    if isinstance(x, str) and x.startswith("$"):
+        if x[1:] not in params:
+            raise ValueError(f"{where}: unknown profile parameter {x!r}; known: {sorted(params)}")
+        return params[x[1:]]
+    if isinstance(x, dict):
+        return {k: _substitute(v, params, where) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_substitute(v, params, where) for v in x]
+    return x
+
+
+def _parse_mission(spec, doctrine, where, objective):
+    """Validate a group's `mission:` block. Returns {profile, reactions, needs}.
+
+    Scenario `reactions` are evaluated before the named profile's, so a scenario can override a profile. A profile may
+    declare `params` (defaults) that its rules reference as "$name"; the scenario overrides them with `profile_params`."""
     doc = (doctrine or {}).get("doctrine", {})
     defaults = doc.get("engage") or {}
     if "default_standoff_km" not in defaults:
         raise ValueError(f"{where}: rules/doctrine.yaml needs doctrine.engage.default_standoff_km")
-    if not isinstance(spec, dict) or set(spec) - {"profile", "objective", "reactions"}:
-        raise ValueError(f"{where}: expected keys profile / objective / reactions")
-    reactions, profile = [], spec.get("profile")
+    if not isinstance(spec, dict) or set(spec) - {"profile", "profile_params", "objective", "reactions"}:
+        raise ValueError(f"{where}: expected keys profile / profile_params / objective / reactions")
+    profile = spec.get("profile")
+    profile_rules, params = [], {}
     if profile is not None:
         profiles = doc.get("profiles") or {}
         if profile not in profiles:
             raise ValueError(f"{where}.profile: unknown doctrine profile {profile!r}; known: {sorted(profiles)}")
-    sources = [(f"{where}.reactions", spec.get("reactions") or [])]
-    if profile is not None:
-        sources.append((f"doctrine.profiles.{profile}.reactions", (doc["profiles"][profile] or {}).get("reactions") or []))
-    for label, rules in sources:
+        prof = profiles[profile] or {}
+        params = dict(prof.get("params") or {})
+        over = spec.get("profile_params") or {}
+        if not isinstance(over, dict) or set(over) - set(params):
+            raise ValueError(f"{where}.profile_params: unknown parameter(s) {sorted(set(over) - set(params))}; "
+                             f"profile {profile!r} has {sorted(params)}")
+        params.update(over)
+        profile_rules = _substitute(prof.get("reactions") or [], params, f"doctrine.profiles.{profile}")
+    elif spec.get("profile_params"):
+        raise ValueError(f"{where}.profile_params: needs a profile")
+    reactions = []
+    for label, rules in ((f"{where}.reactions", spec.get("reactions") or []),
+                         (f"doctrine.profiles.{profile}.reactions", profile_rules)):
         if not isinstance(rules, list):
             raise ValueError(f"{label}: expected a list")
         for k, r in enumerate(rules):
             reactions.append(_parse_reaction(r, f"{label}[{k}]", defaults))
-    return {"profile": profile, "reactions": reactions}
+    needs = {"hyper_limit": False, "mass": False}
+    for k, r in enumerate(reactions):
+        gates = [g for g, _ in r["when"]["all"] + r["when"]["any"]]
+        needs["mass"] |= "force_ratio_over" in gates
+        needs["hyper_limit"] |= "escape_margin_below_s" in gates or r["do"]["action"] == "withdraw"
+        if r["do"].get("leash_m") is not None and (objective or {}).get("type") != "transit_to_orbit":
+            raise ValueError(f"{where}: leash_km needs a transit_to_orbit objective (the leash is measured from the "
+                             f"orbited body), but this group's objective is {(objective or {}).get('type')!r}")
+    return {"profile": profile, "reactions": reactions, "needs": needs}
 
 
 def _null_fields(d, prefix=""):
@@ -565,11 +635,21 @@ def load_config(scenario_path, root=None):
             engagement = None
             if "engagement" in u and u.get("class") in cfg.ship_classes:
                 engagement = _parse_engagement(u["engagement"] or {}, cfg.ship_classes[u["class"]], missiles, w + ".engagement", doctrine)
-            mission = _parse_mission(u["mission"], doctrine, w + ".mission") if u.get("mission") else None
+            mission = _parse_mission(u["mission"], doctrine, w + ".mission", obj) if u.get("mission") else None
             cfg.groups.append(Group(gid, u.get("faction"), u.get("class"), count, pos, vel, fwd, ftype, spacing, obj, orbit,
                                     engagement, mission))
         except ValueError as exc:
             problems.append(str(exc))
+
+    missions = [g for g in cfg.groups if g.mission]
+    if any(g.mission["needs"]["hyper_limit"] for g in missions) and cfg.hyper_limit_m is None:
+        users = sorted(g.id for g in missions if g.mission["needs"]["hyper_limit"])
+        problems.append(f"groups {users}: withdraw / escape_margin_below_s need a hyper_limit in systems/{sc.get('system')}.yaml")
+    if any(g.mission["needs"]["mass"] for g in missions):
+        missing = sorted({g.class_id for g in cfg.groups
+                          if g.class_id in cfg.ship_classes and cfg.ship_classes[g.class_id].raw.get("mass_kg") is None})
+        if missing:
+            problems.append(f"force_ratio_over compares tonnage, but ship class(es) {missing} have no mass_kg in classes/ships.yaml")
 
     for t in sc_doc.get("termination") or [{"type": "duration_reached"}]:
         if t.get("type") not in TERMINATIONS:

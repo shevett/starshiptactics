@@ -1,0 +1,48 @@
+# Five Reliants guard Earth orbit; three Majestics (about 4.6x their tonnage) come in.
+# Blue uses the cautious_defender profile: hold orbit, sortie against closing hostiles, but withdraw to the hyper limit
+# if outweighed and the safe window to escape is closing. See docs/MISSIONS.md.
+scenario:
+  id: incursion02
+  system: solar_system
+  random_seed: 12345
+  time_step_s: 1.0
+  duration_s: 21600
+  snapshot_interval_s: 10
+  orbital_phase_strategy: random
+  sensors:
+    detection_range_km: 10000000     # PLACEHOLDER (see docs/OPEN_QUESTIONS.md)
+  orbital_phase_deg:
+    earth: 0
+
+factions:
+  - id: red
+  - id: blue
+
+units:
+  - group: red_majestics
+    faction: red
+    class: majestic
+    count: 3
+    position_km: {x: 125000000, y: 2000000, z: 0}
+    velocity_km_s: {x: -1200, y: 0, z: 0}
+    orientation:
+      forward_vector: [1, 0, 0]
+    formation: {type: line_abreast, spacing_km: 200}
+    mission:
+      profile: aggressive_transit
+      objective: {type: transit_to_orbit, body: earth, altitude_km: 30000}
+    engagement: {mode: fire_at_will, missile: standard_nuclear}
+
+  - group: blue_defenders
+    faction: blue
+    class: reliant
+    count: 5
+    orbit: {body: earth, altitude_km: 20000, spacing_km: 500}
+    mission:
+      profile: cautious_defender
+      objective: {type: transit_to_orbit, body: earth, altitude_km: 20000}   # i.e. stay where it is
+      profile_params: {force_ratio: 2.5, escape_margin_s: 900}
+    engagement: {mode: fire_at_will, missile: standard_nuclear}
+
+termination:
+  - type: duration_reached

@@ -14,6 +14,7 @@ doctrine:
     fire_range_fraction: 0.8       # fire when a hostile track is inside this fraction of the missile's powered reach
     ballistic_expiry_s: 120        # a missile that has burned out is removed this long after burnout if unspent
     max_missiles_in_flight_per_target: 20   # hold fire on a target while this many of the faction's missiles are already aimed at it
+    destroyed_integrity: 0.05      # PLACEHOLDER: at or below this a ship is a dead hulk (no thrust, steering or fire; drifts on its momentum)
     assumed_dead_integrity: 0.05   # stop targeting ships at or below this integrity (assumes perfect, instant battle damage assessment)
 
   # How a group classifies hostile tracks (PLACEHOLDER tuning values; see docs/MISSIONS.md).
@@ -26,10 +27,33 @@ doctrine:
   engage:
     default_standoff_km: 1000000     # hold this range from the target when a reaction does not say otherwise
 
+  # Escape assessment (the `escape_margin_below_s` condition and the `withdraw` action). PLACEHOLDER tuning values.
+  escape:
+    envelope_factor: 1.0             # a hostile's envelope radius = its missile powered reach x this
+    update_interval_s: 30            # how often a group re-plans its escape
+    ring_headings: 32                # candidate headings in the ecliptic plane (plus two tilted rings of half as many)
+    elevation_deg: 45                # tilt of those rings
+    sample_step_s: 60                # time resolution of the path check
+    max_path_s: 21600                # a route that cannot reach the hyper limit within this long does not count
+    margin_cap_s: 3600               # margins are reported up to this value ("plenty of time")
+
   # Reusable reaction sets, referenced from a scenario group as  mission: {profile: <name>}.
   # Reactions are evaluated top to bottom; the first one with a matching hostile track wins. If none matches the group
   # simply flies its objective. A contact that is lost or destroyed stops matching, so the objective resumes.
   profiles:
+    cautious_defender:               # "hold my orbit, sortie against what closes, but get out if the odds turn bad"
+      params:                        # defaults; a scenario overrides them with mission.profile_params
+        force_ratio: 2.5             # withdraw if hostile tonnage exceeds this multiple of ours ...
+        escape_margin_s: 900         # ... and the safe window to flee closes within this long
+        magazine_floor: 0.15         # withdraw if we are down to this fraction of our missiles
+        losses: 0.6                  # ... or have lost this fraction of the group's tonnage
+        standoff_km: 100000
+        leash_km: 100000             # never sortie farther than this from the orbited body
+      reactions:
+        - {when: {force_ratio_over: $force_ratio, escape_margin_below_s: $escape_margin_s}, do: {withdraw: {}}}
+        - {when: {any: [{own_magazine_below: $magazine_floor}, {own_strength_lost_over: $losses}]}, do: {withdraw: {}}}
+        - {when: {hostile: closing}, do: {engage: {standoff_km: $standoff_km, leash_km: $leash_km}}}
+
     aggressive_transit:              # "get to my objective, but fight anything that shows up"
       reactions:
         - {when: {hostile: closing}, do: {engage: {}}}

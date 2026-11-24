@@ -151,10 +151,11 @@ def build(run_dir):
     cum_launch, cum_det, in_flight = step_series(L), step_series(D_), step_series(F)
 
     # kills: first time integrity <= threshold
-    kills = {}
+    kills, kill_i = {}, {}
     for sid in ids:
         below = np.nonzero(I[idx[sid]] <= dead_thr)[0]
         kills[sid] = float(T[below[0]]) if len(below) else None
+        kill_i[sid] = int(below[0]) if len(below) else None
 
     # detonations table (positions relative to ref)
     det_rows = []
@@ -235,8 +236,9 @@ def build(run_dir):
             moments.append({"t": e["t"], "label": f"{e['actor_id']} departs via the hyper limit", "kind": "depart"})
         elif e["type"] == "mission_changed":
             d = e["data"]
-            if d["behavior"] == "engage" and d["previous"] == "objective":
-                moments.append({"t": e["t"], "label": f"{e['actor_id']} switches to engage ({d['reason']}: {d['target_id']})",
+            if d["behavior"] in ("engage", "withdraw") and d["previous"] != d["behavior"]:
+                on = f" on {d['target_id']}" if d.get("target_id") else ""
+                moments.append({"t": e["t"], "label": f"{e['actor_id']} switches to {d['behavior']}{on} ({d['reason']})",
                                 "kind": "mission"})
             elif d["behavior"] == "objective":
                 moments.append({"t": e["t"], "label": f"{e['actor_id']} resumes its objective ({d['reason']})", "kind": "mission"})
@@ -256,7 +258,7 @@ def build(run_dir):
         "orbits": [{"group": o["group"], "radius_km": o["radius_m"] / 1000} for o in orbits],
         "factions": factions, "dead_threshold": dead_thr,
         "ships": [{"id": s["id"], "faction": s["faction"], "group": s["group"], "class": s["class"],
-                   "integrity": float(I[idx[s["id"]], -1]), "kill_t": kills[s["id"]], "departed_t": dep_t[s["id"]],
+                   "integrity": float(I[idx[s["id"]], -1]), "kill_t": kills[s["id"]], "kill_i": kill_i[s["id"]], "departed_t": dep_t[s["id"]],
                    "launched": sum(1 for r in launch_rows if r["launcher"] == s["id"]),
                    "hit_by": sum(1 for d in det_rows if d["target"] == s["id"])} for s in ships],
         "warnings": meta.get("warnings", []),

@@ -18,7 +18,8 @@ Useful files:
 - `rules/simulation.yaml` — deterministic simulation defaults/constants
 - `rules/doctrine.yaml` — initial doctrine hooks
 - `scenarios/example.yaml`, `scenarios/earth_orbit.yaml` — example scenarios (the latter shows orbits)
-- `docs/MISSIONS.md` — group missions: detection, reaction rules, engage / objective stack
+- `docs/MISSIONS.md` — group missions: detection, reaction rules, engage / withdraw / objective stack
+- `scenarios/incursion01.yaml`, `scenarios/incursion02.yaml` — fleet engagements (the latter shows a cautious defender withdrawing)
 - `docs/CLAUDE_HANDOFF.md` — implementation handoff
 - `docs/OPEN_QUESTIONS.md` — values intentionally left unresolved
 
