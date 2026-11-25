@@ -61,6 +61,18 @@ class Run:
         self.m_interval = float(self.meta.get("missile_output_interval_s") or self.meta.get("time_step_s") or 1.0)
         # a missile stops existing at its detonation; without that it would be drawn up to the next stored record
         self.m_end = {e["actor_id"]: e["t"] for e in self.events if e["type"] in ("detonation", "missile_expired")}
+        # per missile: launch (time, launcher), first and last stored record, faction, target
+        self.m_launch = {e["data"]["missile_id"]: (e["t"], e["actor_id"], e["data"].get("target_id"))
+                         for e in self.events if e["type"] == "missile_launch"}
+        self.m_first, self.m_last, self.m_faction = {}, {}, {}
+        for k, row in enumerate(self.mrows):
+            for mid, rec in row.items():
+                self.m_first.setdefault(mid, k)
+                self.m_last[mid] = k
+                self.m_faction[mid] = rec.get("faction")
+        self.m_span = {m: (self.m_launch[m][0] if m in self.m_launch else self.mt[k],
+                           min(self.m_end.get(m, np.inf), self.mt[self.m_last[m]] + self.m_interval))
+                       for m, k in self.m_first.items()}
 
     def _bracket(self, t):
         k = int(np.clip(np.searchsorted(self.t, t, side="right") - 1, 0, len(self.t) - 1))
@@ -79,24 +91,24 @@ class Run:
                 "dead": bool(self.dead[i, k]), "gone": bool(self.gone[i, k])}
 
     def missiles_alive(self, t):
-        """ids of missiles in flight at time t (from the last stored record at or before t)."""
-        if not len(self.mt) or t < self.mt[0]:
-            return []
-        k = int(np.searchsorted(self.mt, t, side="right") - 1)
-        if t - self.mt[k] > self.m_interval + 1e-9:
-            return []
-        return [i for i in self.mrows[k] if self.m_end.get(i, np.inf) > self.mt[k]]
+        """ids of missiles in flight at time t (from launch to detonation, or to the end of their stored records)."""
+        return [m for m, (a, b) in self.m_span.items() if a <= t < b]
 
     def missile_pos(self, mid, t):
-        """Position of a missile at t, or None if it has no record near t. Clamped to its end (detonation) time."""
-        t = min(t, self.m_end.get(mid, np.inf))
-        k = int(np.clip(np.searchsorted(self.mt, t, side="right") - 1, 0, len(self.mt) - 1))
-        a = self.mrows[k].get(mid)
-        if a is None:
+        """Position of a missile at t, or None outside its flight. Clamped to its end (detonation) time."""
+        if mid not in self.m_span or t < self.m_span[mid][0] - 1e-9:
             return None
+        t = min(t, self.m_end.get(mid, np.inf))
+        k0 = self.m_first[mid]
+        if t < self.mt[k0]:                                # just launched: from the launcher's state to the first record
+            tl, launcher, _ = self.m_launch[mid]
+            a, b, h = self.state(launcher, tl), self.mrows[k0][mid], self.mt[k0] - tl
+            return hermite((t - tl) / h, h, a["p"], a["v"], np.array(b["position_m"]), np.array(b["velocity_m_s"]))
+        k = int(np.clip(np.searchsorted(self.mt, t, side="right") - 1, k0, self.m_last[mid]))
+        a = self.mrows[k][mid]
         p0, v0, tau = np.array(a["position_m"]), np.array(a["velocity_m_s"]), t - self.mt[k]
         b = self.mrows[k + 1].get(mid) if k + 1 < len(self.mrows) else None
-        if b is None or tau < 0:
+        if b is None:
             return p0 + v0 * tau
         h = self.mt[k + 1] - self.mt[k]
         return hermite(tau / h, h, p0, v0, np.array(b["position_m"]), np.array(b["velocity_m_s"]))

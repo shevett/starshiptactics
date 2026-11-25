@@ -48,6 +48,13 @@ def material(name, base=None, emission=None, strength=0.0, by_object=False, text
         nt.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
     elif by_object:
         nt.links.new(info.outputs["Color"], bsdf.inputs["Base Color"])
+    if by_object:                                           # heat: the object's colour alpha below 1 makes the metal glow
+        hot = nt.nodes.new("ShaderNodeMath")
+        hot.operation = "MULTIPLY_ADD"                       # (1 - alpha) * 0.45
+        hot.inputs[1].default_value, hot.inputs[2].default_value = -0.45, 0.45
+        nt.links.new(info.outputs["Alpha"], hot.inputs[0])
+        nt.links.new(hot.outputs[0], bsdf.inputs["Emission Strength"])
+        bsdf.inputs["Emission Color"].default_value = (1.0, 0.3, 0.06, 1.0)
     if emission:
         bsdf.inputs["Emission Color"].default_value = (*emission, 1.0)
         bsdf.inputs["Emission Strength"].default_value = strength
@@ -103,6 +110,22 @@ def glow(name, rgb, strength, soft=False):
             setattr(m, attr, val)
         except Exception:
             pass
+    return m
+
+
+def ember():
+    """Emitter whose colour and brightness come from the object's colour (set per frame as the fragment cools)."""
+    m = bpy.data.materials.new("ember")
+    m.use_nodes = True
+    nt = m.node_tree
+    nt.nodes.clear()
+    out, em, info, k = (nt.nodes.new(n) for n in ("ShaderNodeOutputMaterial", "ShaderNodeEmission", "ShaderNodeObjectInfo", "ShaderNodeMath"))
+    k.operation = "MULTIPLY"
+    k.inputs[1].default_value = 10.0
+    nt.links.new(info.outputs["Color"], em.inputs["Color"])
+    nt.links.new(info.outputs["Alpha"], k.inputs[0])
+    nt.links.new(k.outputs[0], em.inputs["Strength"])
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
     return m
 
 
@@ -220,8 +243,25 @@ streaks = [primitive("primitive_cylinder_add", f"streak{i:03d}", streak_mat[None
 for ob in streaks:
     ob.rotation_mode = "QUATERNION"
 n_flash = max((sum(1 for fl in shot["flashes"] if str(f) in fl["frames"]) for f in range(shot["frames"])), default=0)
-flash_mat = glow("flash", (1.0, 0.45, 0.1), 5.0, soft=True)
+flash_mat = glow("flash", (1.0, 0.45, 0.1), 8.0, soft=True)
 flashes = [primitive("primitive_uv_sphere_add", f"flash{i:03d}", flash_mat, radius=1.0, segments=48, ring_count=24) for i in range(n_flash)]
+ember_mat = ember()
+sparks = [(sp, primitive("primitive_ico_sphere_add", f"spark{i:03d}", ember_mat, radius=1.0, subdivisions=1)) for i, sp in enumerate(shot.get("sparks", []))]
+ship_loc = {s["id"]: s["loc"] for s in shot["ships"]}
+ship_by_id = {s["id"]: s for s in shot["ships"]}
+
+# missile models (for missiles that are near the camera and slow across the frame): a body with a drive glow at the tail
+mm = shot["missile_mesh"]
+missile_mat = material("missile", base=(0.55, 0.56, 0.6))
+drive_mat = glow("drive", (0.35, 0.6, 1.0), 6.0, soft=True)
+missiles = []
+for i in range(max((len(x) for x in shot["models"]), default=0)):
+    ob = mesh_object(f"missile{i:03d}", mm["verts"], mm["faces"], None, missile_mat)
+    ob.rotation_mode = "QUATERNION"
+    ob.scale = (mm["scale"],) * 3
+    g = primitive("primitive_uv_sphere_add", f"drive{i:03d}", drive_mat, radius=1.0, segments=24, ring_count=12)
+    g.color = (1.0, 1.0, 1.0, 1.0)
+    missiles.append((ob, g))
 flash_light = []
 for i in range(min(n_flash, 4)):                         # a few point lights so a flash lights the hull next to it
     L = bpy.data.objects.new(f"flashlight{i}", bpy.data.lights.new(f"flashlight{i}", "POINT"))
@@ -231,7 +271,7 @@ for i in range(min(n_flash, 4)):                         # a few point lights so
 # ------------------------------------------------------------------ camera, render settings
 cam = bpy.data.objects.new("camera", bpy.data.cameras.new("camera"))
 cam.data.lens = shot["lens_mm"]
-cam.data.clip_start, cam.data.clip_end = 0.5, shot["far"] * 1.5
+cam.data.clip_start, cam.data.clip_end = 0.05, shot["far"] * 1.5
 cam.rotation_mode = "QUATERNION"
 col.objects.link(cam)
 scene.camera = cam
@@ -267,7 +307,7 @@ def pose(f):
         ob.location = s["loc"][f]
         ob.rotation_quaternion = Quaternion(s["quat"][f])
         ob.color = HULL_DEAD if s["dead"][f] else HULL_LIVE
-        age = shot["times"][f] - s["kill_t"] if s.get("kill_t") is not None else -1.0
+        age = s["kill_age"][f] if s.get("kill_age") else -1.0
         broken = bool(parts) and age >= 0.0
         hide(ob, s["gone"][f] or broken)
         for pc, po in parts:
@@ -275,14 +315,14 @@ def pose(f):
             if broken:
                 po.location = Vector(pc["centre"]) + Vector(pc["drift"]) * age * shot["debris_speed"]
                 po.rotation_quaternion = Quaternion(Vector(pc["axis"]), pc["rate"] * age * shot["debris_spin"])
-                heat = max(0.0, 1.0 - age / shot["debris_cool_s"])           # freshly broken metal is lit by the fireball
-                po.color = tuple(d + (h - d) * heat for d, h in zip(HULL_DEAD, (0.9, 0.55, 0.3, 1.0)))
+                heat = max(0.0, 1.0 - s["kill_film"][f] / shot["debris_cool_s"]) ** 2      # freshly broken metal glows, then cools
+                po.color = (*HULL_DEAD[:3], 1.0 - heat)
     for b, ob in bodies:
         ob.location = b["loc"][f]
         ob.scale = (b["radius"][f],) * 3
     c = shot["camera"][f]
     cam.location = c["loc"]
-    cam.rotation_quaternion = (Vector(c["look"]) - Vector(c["loc"])).to_track_quat("-Z", "Z")
+    cam.rotation_quaternion = (Vector(c["look"]) - Vector(c["loc"])).to_track_quat("-Z", "Y")
     if shot["sun_dir"]:
         sun.rotation_quaternion = Vector(shot["sun_dir"][f]).to_track_quat("-Z", "Y")
     view = Vector(c["look"]) - Vector(c["loc"])
@@ -313,11 +353,32 @@ def pose(f):
         ob.scale = (live[i]["radius"],) * 3
         ob.color = (1.0, 1.0, 1.0, live[i]["power"])
         hide(ob, False)
+    mods = shot["models"][f]
+    for i, (ob, g) in enumerate(missiles):
+        hide(ob, i >= len(mods))
+        hide(g, i >= len(mods))
+        if i < len(mods):
+            d = Vector(mods[i]["dir"])
+            ob.location = mods[i]["loc"]
+            ob.rotation_quaternion = d.to_track_quat("X", "Z")
+            g.location = Vector(mods[i]["loc"]) - d * mm["length"] * 0.58
+            g.scale = (mm["length"] * 0.13,) * 3
+    for sp, ob in sparks:
+        ks = ship_by_id[sp["ship"]]
+        age = ks["kill_age"][f]
+        heat = 1.0 - ks["kill_film"][f] / sp["cool_s"]
+        if age < 0.0 or heat <= 0.0:
+            hide(ob, True)
+            continue
+        ob.location = Vector(ship_loc[sp["ship"]][f]) + Vector(sp["start"]) + Vector(sp["vel"]) * age
+        ob.scale = (sp["size"],) * 3
+        ob.color = (1.0, 0.25 + 0.6 * heat, 0.05 + 0.7 * heat ** 3, heat ** 2)      # white-hot, to orange, to dull red
+        hide(ob, False)
     for i, L in enumerate(flash_light):
         if i < len(live):
             L.location = live[i]["loc"]
             L.data.energy = 6.0e4 * live[i]["power"]
-            L.data.shadow_soft_size = live[i]["radius"]
+            L.data.use_shadow = False
             hide(L, False)
         else:
             hide(L, True)

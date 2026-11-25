@@ -11,6 +11,25 @@ python3 -m simulator render output/incursion02 --frames 30:40        # a quick l
 python3 -m simulator render output/incursion02 --shot-only           # write shot.json, do not start Blender
 ```
 
+### Sequences
+
+`--sequence kill` builds a three-shot sequence around the destruction of `--target` (default: the last ship destroyed):
+
+```
+python3 -m simulator render output/incursion02 --sequence kill --target red_majestics-003 --name killseq
+```
+
+1. **launch**: the ship that fired the killing missile, side-on to the direction the salvo leaves in, in slow motion.
+2. **chase**: the camera rides behind that missile to its target. The range shrinks by the same factor every frame, so
+   the cruise is compressed into the first second and the final approach runs in extreme slow motion.
+3. **kill**: an orbit of the target from just before impact through its break-up.
+
+Each shot has its own scene origin (a ship or a missile), camera rig and frame-to-time mapping (`shot.py`:
+`orbit_shot`, `chase_shot`, `kill_sequence`, `build_sequence`). Effect lifetimes (flashes, glow) are in seconds of film,
+so they look the same at any playback speed. A missile near the camera that moves little across the frame is drawn as
+a model with a drive glow; a fast one as a streak. The missiles of a salvo share one position in the simulation, so
+their models are spread into a loose ring around it (cosmetic).
+
 Output goes to `<run>/render/<name>/`: `shot.json`, `frames/00000.png ...`, `<name>.mp4` (if ffmpeg is installed) and
 `scene.blend` (the first frame, to open and look around by hand). Needs `blender` on the PATH (tested with 5.0).
 
@@ -73,8 +92,14 @@ cosmetic: the simulator tracks one hulk, and the pieces ride on its path.
 
 ## Known gaps
 
-- One camera move (a slow orbit of the target, measured from its nose). No shot list, cuts or event-driven camera yet.
+- Two camera rigs (orbit, missile chase) and one preset sequence. No shot-list file, and no event-driven camera yet.
 - Objects are posed per frame in the render loop, not keyframed, so `scene.blend` holds a single frame.
 - No impeller wedge, no drive glow, no bloom. The kill fireball is a plain glowing ball and slow to render.
-- Missiles show only as one-frame streaks; there is no missile model.
+- The missile model is a plain cylinder and its drive glow is a flat white ball. A salvo leaves from the centre of the hull.
 - Planet surfaces are a flat colour.
+
+Wanted for the kill sequence (noted from review, not started):
+
+- Missiles should leave from the broadside tubes, not appear outside the hull.
+- Missile exhaust in the chase shot, so the missiles read as moving.
+- A slight camera orbit during the chase, to show motion.

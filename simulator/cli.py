@@ -36,6 +36,7 @@ def main(argv=None):
     rn.add_argument("--engine", choices=("eevee", "cycles"), default="eevee")
     rn.add_argument("--name", default="clip", help="output goes to <run>/render/<name>/")
     rn.add_argument("--frames", help="render only frames a:b (for a quick look)")
+    rn.add_argument("--sequence", choices=("kill",), help="kill: launch, missile chase and destruction of --target (default: the last ship destroyed)")
     rn.add_argument("--shot-only", action="store_true", help="write shot.json and stop (no Blender)")
     args = ap.parse_args(argv)
 
@@ -45,14 +46,25 @@ def main(argv=None):
         from .render import shot as shot_mod
         repo = Path(__file__).resolve().parent.parent
         out = Path(args.run) / "render" / args.name
+        res = tuple(int(x) for x in args.res.lower().split("x"))
         try:
-            sh = shot_mod.build(args.run, out, repo, target=args.target, t0=args.t0, t1=args.t1, speed=args.speed, fps=args.fps,
-                                ship_scale=args.ship_scale, resolution=tuple(int(x) for x in args.res.lower().split("x")),
-                                engine=args.engine, cam_dist=args.cam_dist)
+            if args.sequence == "kill":
+                from .render.interp import Run
+                run = Run(args.run)
+                shot_mod._class_dims(run, repo)
+                plan = shot_mod.kill_sequence(run, args.target, fps=args.fps, ship_scale=args.ship_scale)
+                print(f"Sequence: {plan['missile']} from {plan['launcher']} at T+{plan['launch_t']:.0f} s, hits {plan['target']} at T+{plan['impact_t']:.1f} s")
+                sh = shot_mod.build_sequence(run, out, repo, plan["shots"], fps=args.fps, target=plan["target"], hero=plan["missile"],
+                                             ship_scale=args.ship_scale, resolution=res, engine=args.engine)
+            else:
+                sh = shot_mod.build(args.run, out, repo, target=args.target, t0=args.t0, t1=args.t1, speed=args.speed, fps=args.fps,
+                                    ship_scale=args.ship_scale, resolution=res, engine=args.engine, cam_dist=args.cam_dist)
         except (ValueError, FileNotFoundError) as exc:
             print(f"render: {exc}", file=sys.stderr)
             return 2
-        print(f"Shot: {sh['target']} T+{sh['t0']:.0f}..{sh['t1']:.0f} s, {sh['frames']} frames at {sh['fps']} fps -> {out}/shot.json")
+        for x in sh["shots"]:
+            print(f"  shot {x['name']}: {x['frames']} frames, T+{x['t0']:.2f}..{x['t1']:.2f} s, follows {x['origin'][1]}")
+        print(f"{sh['frames']} frames at {sh['fps']} fps -> {out}/shot.json")
         if args.shot_only:
             return 0
         blender = shutil.which("blender")

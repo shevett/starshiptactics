@@ -71,5 +71,32 @@ class Shot(unittest.TestCase):
             self.assertTrue(json.loads((Path(d) / "shot" / "shot.json").read_text())["frames"] == 96)
 
 
+@unittest.skipUnless((REPO / "output" / "incursion02" / "missiles.jsonl").exists(), "needs a finished incursion02 run in output/")
+class KillSequence(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.run_ = Run(REPO / "output" / "incursion02")
+        shot._class_dims(cls.run_, REPO)
+        cls.plan = shot.kill_sequence(cls.run_)
+
+    def test_missile_leaves_from_its_launcher(self):
+        run, plan = self.run_, self.plan
+        at_launch = run.missile_pos(plan["missile"], plan["launch_t"])
+        self.assertLess(np.linalg.norm(at_launch - run.state(plan["launcher"], plan["launch_t"])["p"]), 1.0)
+        self.assertIsNone(run.missile_pos(plan["missile"], plan["launch_t"] - 1.0))
+        self.assertIn(plan["missile"], run.missiles_alive(plan["launch_t"] + 0.5))       # before its first stored record
+
+    def test_chase_closes_on_the_target_at_a_steady_rate(self):
+        run, plan = self.run_, self.plan
+        chase = plan["shots"][1]
+        ts = chase["times"]
+        self.assertTrue(all(b >= a for a, b in zip(ts, ts[1:])))
+        self.assertLessEqual(ts[-1], plan["impact_t"])
+        rng = [np.linalg.norm(run.missile_pos(plan["missile"], t) - run.state(plan["target"], t)["p"]) for t in ts]
+        ratio = np.array(rng[1:]) / np.array(rng[:-1])
+        self.assertTrue(np.allclose(ratio, ratio[0], rtol=1e-3))                        # same shrink factor every frame
+        self.assertEqual([s["name"] for s in plan["shots"]], ["launch", "chase", "kill"])
+
+
 if __name__ == "__main__":
     unittest.main()
