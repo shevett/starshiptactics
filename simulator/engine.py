@@ -107,6 +107,10 @@ class Simulation:
         self.thrust_prev = np.zeros_like(self.P)      # last step's thrust acceleration (for path prediction)
         self.amax = np.array([cfg.ship_classes[c].max_accel for c in cls])
         self.rate = np.array([cfg.ship_classes[c].max_rotation_rate for c in cls])
+        self.amax0, self.rate0 = self.amax.copy(), self.rate.copy()      # undamaged values; self.amax / self.rate are degraded
+        self.fire_f = np.ones(len(ids))
+        dmg = cfg.doctrine.get("doctrine", {}).get("damage") or {}
+        self.curves = {k: sorted((float(a), float(b)) for a, b in dmg.get(k, [])) for k in ("thrust", "rotation", "fire")}
         self.mode = [None] * len(ids)
         self.mass = np.array([float(cfg.ship_classes[c].raw.get("mass_kg") or np.nan) for c in cls])   # kg (nan = unknown)
         self.reach = np.array([float((self._missile_envelope(c) or {}).get("powered_range_m", 0.0)) for c in cls])
@@ -527,7 +531,8 @@ class Simulation:
                         best, room = (d, j, key), free
                 if best is None:
                     continue
-                n = min(eng["salvo_size"], bat["tubes"], bat["magazine"], room)
+                f = float(self.fire_f[i])                       # damaged ships fire from fewer tubes
+                n = min(math.ceil(eng["salvo_size"] * f), math.ceil(bat["tubes"] * f), bat["magazine"], room)
                 for _ in range(n):
                     mid = self.swarm.launch(t, self.ids[i], self.fac[i], i, best[1], self.P[i], self.V[i],
                                             eng["missile"], spec, self.doc["ballistic_expiry_s"])
@@ -538,6 +543,20 @@ class Simulation:
                 bat["magazine"] -= n
                 bat["next_ready"] = t + max(bat["cycle"], float(self.doc["salvo_interval_s"]))
 
+    def capability(self, kind, integrity):
+        """Fraction (0-1) of a capability a ship keeps at this hull integrity, from the doctrine.damage curves."""
+        c = self.curves.get(kind)
+        if not c:
+            return 1.0
+        return float(np.interp(integrity, [a for a, _ in c], [b for _, b in c]))
+
+    def _apply_damage(self, k):
+        """Re-derive ship k's degraded limits from its integrity (called whenever it is hit)."""
+        x = float(self.integrity[k])
+        self.amax[k] = self.amax0[k] * self.capability("thrust", x)
+        self.rate[k] = self.rate0[k] * self.capability("rotation", x)
+        self.fire_f[k] = self.capability("fire", x)
+
     def _resolve_missile_events(self, det, burnouts, expired):
         for b in burnouts:
             self.stats["burned_out"] += 1
@@ -546,6 +565,7 @@ class Simulation:
             k = d["ship_index"]
             before = float(self.integrity[k])
             self.integrity[k] = before * (1.0 - d["damage"])
+            self._apply_damage(k)
             self.stats["detonated"] += 1
             self.emit(d["t"], "detonation", d["missile_id"], {
                 "launcher_id": d["launcher_id"], "target_id": self.ids[k], "range_m": round(d["range_m"], 3),

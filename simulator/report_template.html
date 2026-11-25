@@ -115,7 +115,7 @@ th { color: var(--ink2); font-weight: 600; }
     <div class="two"><div id="c-cum"></div><div id="c-flight"></div></div></div>
 
   <div class="panel"><h2>Hull integrity</h2>
-    <p>1.0 is undamaged. Log scale; the dotted line is the doctrine's "assumed dead" threshold. Ships stay fully capable until destroyed, then drift as hulks.</p>
+    <p>1.0 is undamaged. Log scale; the dotted line is the doctrine's "assumed dead" threshold. Damage degrades thrust, turning and fire rate (doctrine.damage curves); destroyed ships drift as hulks.</p>
     <div id="c-integrity"></div></div>
 
   <div class="two">
@@ -494,7 +494,7 @@ function renderMiss() {
 function buildStatic() {
   $("title").textContent = D.scenario + " — after-action report";
   $("subtitle").textContent = `seed ${D.seed} · simulator ${D.version} · ${fmtT(D.t0)} to ${fmtT(D.t1)} · ${D.ships.length} ships`;
-  $("note").textContent = "Weapon yield, damage curve and firing doctrine are placeholder values (see docs/OPEN_QUESTIONS.md), and a ship stays fully capable until it is destroyed (no partial damage yet). Read this report as a view of the mechanics, not as a canon outcome.";
+  $("note").textContent = "Weapon yield, damage curve and firing doctrine are placeholder values (see docs/OPEN_QUESTIONS.md), and damage curves are placeholders too. Read this report as a view of the mechanics, not as a canon outcome.";
   const cards = $("cards");
   for (const f of FACT) {
     const ss = D.ships.filter(s => s.faction === f), escaped = ss.filter(s => s.departed_t != null).length,

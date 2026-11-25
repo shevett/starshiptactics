@@ -17,6 +17,14 @@ doctrine:
     destroyed_integrity: 0.05      # PLACEHOLDER: at or below this a ship is a dead hulk (no thrust, steering or fire; drifts on its momentum)
     assumed_dead_integrity: 0.05   # stop targeting ships at or below this integrity (assumes perfect, instant battle damage assessment)
 
+  # Partial damage: how much of its capability a ship keeps at a given hull integrity (1 = undamaged). Each curve is a
+  # piecewise-linear list of [integrity, factor] points, ascending integrity not required; outside the range the end values
+  # hold. A ship at or below engagement.destroyed_integrity is a hulk and keeps nothing. PLACEHOLDER values.
+  damage:
+    thrust:   [[1.0, 1.0], [0.6, 0.85], [0.3, 0.5], [0.05, 0.1]]     # maximum acceleration
+    rotation: [[1.0, 1.0], [0.5, 0.7], [0.05, 0.15]]                 # maximum turn rate
+    fire:     [[1.0, 1.0], [0.6, 0.8], [0.3, 0.4], [0.05, 0.05]]     # tubes in action: scales salvo size
+
   # How a group classifies hostile tracks (PLACEHOLDER tuning values; see docs/MISSIONS.md).
   # Posture is judged from the track's range-rate relative to the group's centre:
   #   closing  = range shrinking faster than the threshold;  fleeing = growing faster than it;  holding = neither.

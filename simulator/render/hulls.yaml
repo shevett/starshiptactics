@@ -1,0 +1,21 @@
+# Placeholder hull shapes for cinematic renders, built from the reference pictures in images/.
+#
+# sheet:   a reference sheet with orthographic views on a plain backdrop (bow to the left in the top and side views).
+#          The hull's width comes from the top view and its height from the side view; the views are also its texture.
+# views:   rough boxes [left, top, right, bottom] around each view, in pixels. Each is tightened to the drawing.
+#
+# Older forms, still supported per class:
+#   image + trace: true   one true side view; the hull is a lathe of its silhouette
+#   profile: [[x, r], ...] a lathe profile set by hand (x from 0 stern to 1 bow, r as a fraction of the largest radius)
+#
+# The hull is stretched to each class's length, beam and height from classes/ships.yaml.
+# A real model replaces the placeholder: put assets/ships/<class>.glb (or .obj) in the repo. See docs/RENDER.md.
+default:                         # the Minotaur (LAC carrier) sheet stands in for every class until each has its own
+  sheet: images/ship-reference-v01.png
+  views:
+    top:   [60, 40, 1400, 280]
+    side:  [60, 340, 1400, 545]
+    front: [70, 640, 290, 885]
+    rear:  [300, 640, 510, 885]
+
+classes: {}

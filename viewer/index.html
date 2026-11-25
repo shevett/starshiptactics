@@ -34,6 +34,8 @@
   #info span:first-child { color: var(--dim); }
   .modal { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 10; }
   .modal.hidden { display: none; }
+  #perf { position: fixed; left: 8px; bottom: 8px; z-index: 5; margin: 0; padding: 4px 8px; background: #000a; color: #7bf0a5; font: 11px ui-monospace, monospace; border-radius: 4px; pointer-events: none; white-space: pre; }
+  #perf.hidden { display: none; }
   .modal .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px 14px; min-width: 300px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 30px #000a; }
   .modal .mh { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--hi); }
   #fleet { max-height: 340px; overflow-y: auto; }
@@ -119,6 +121,8 @@
 </aside>
 
 
+<pre id="perf" class="hidden"></pre>
+<pre id="bench" class="hidden"></pre>
 <div id="optModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Display options">
   <div class="card">
     <div class="mh"><b>Display options</b><button id="optClose" title="close (Esc)">✕</button></div>
@@ -139,6 +143,7 @@
     <label><input type="checkbox" id="oEnv" checked> missile envelope &amp; hyper limit</label>
     <label><input type="checkbox" id="oGrid" checked> grid</label>
     <label><input type="checkbox" id="oTruth"> truth ghosts in faction view</label>
+    <label><input type="checkbox" id="oPerf"> frame timing readout</label>
   </div>
 </div>
 
@@ -150,7 +155,11 @@ const cv = $("cv"), ctx = cv.getContext("2d"), strip = $("strip"), sctx = strip.
 let D = null;                      // loaded run
 const V = { cx: 0, cy: 0, scale: 1e9, follow: "sun", selected: null, autofit: false, fitZoom: 1 };   // scale = metres per pixel
 const P = { t: 0, playing: false, speed: 60 };
-const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// theme variables are cached: getComputedStyle after a DOM write forces a style recalculation, and draw() asks ~15 times a frame
+const _cssCache = new Map();
+const css = n => { let v = _cssCache.get(n); if (v === undefined) { v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); _cssCache.set(n, v); } return v; };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => _cssCache.clear());
+new MutationObserver(() => _cssCache.clear()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
 
 // ---------------------------------------------------------------- loading
 function parseJsonl(text) {
@@ -169,7 +178,8 @@ async function loadFromUrl(run) {
     ["metadata.json", "state.jsonl", "events.jsonl"].map(f => fetch(new URL(f, base)).then(r => { if (!r.ok) throw new Error(f + ": HTTP " + r.status); return r.text(); })));
   const missiles = await fetch(new URL("missiles.jsonl", base)).then(r => r.ok ? r.text() : "").catch(() => "");   // optional
   init(JSON.parse(meta), parseJsonl(state), parseJsonl(events), parseJsonl(missiles));
-  const q = new URLSearchParams(location.search); if (q.get("t")) seek(+q.get("t")); if (q.get("fit")) fitShips();      // ?t=seconds opens at that time
+  const q = new URLSearchParams(location.search); if (q.get("t")) seek(+q.get("t")); if (q.get("fit")) fitShips(); if (q.get("sys")) fitSystem();
+  if (q.get("bench")) { if (q.get("speed")) P.speed = +q.get("speed"); if (q.get("zoom")) V.scale *= +q.get("zoom"); P.playing = true; const r = await bench(+q.get("bench")); r.speed = P.speed; r.scale = V.scale; $("bench").textContent = "BENCH " + JSON.stringify(r); $("bench").classList.remove("hidden"); console.log("BENCH " + JSON.stringify(r)); }      // ?t=seconds opens at that time
 }
 async function loadFromFiles(list) {
   const by = {};
@@ -213,7 +223,8 @@ function init(meta, rows, events, missileRows) {
   const tracks = rows.map(r => r.tracks || null);
   D = { meta, n, t, objs, byId: Object.fromEntries(objs.map(o => [o.id, o])), tracks, events,
         mrows: missileRows || [], ships: objs.filter(o => o.kind === "ship"), bodies: objs.filter(o => o.kind === "body"),
-        tEnd: t[n - 1], trailCache: {} };
+        tEnd: t[n - 1], trailCache: {},
+        flash: events.filter(e => e.type === "avoidance_maneuver" || e.type === "objective_complete" || e.type === "detonation") };
   D.groups = {}; for (const s of D.ships) (D.groups[s.meta.group] = D.groups[s.meta.group] || []).push(s);
   $("scn").textContent = `${meta.scenario_id} · seed ${meta.random_seed} · ${D.ships.length} ships · ${meta.warnings.length} config warning(s)`;
   buildControls(); buildEvents(); buildFleet(); $("load").classList.add("hidden");
@@ -234,6 +245,10 @@ function rowIndex(t) {           // last row with t[k] <= t
 }
 // cubic Hermite between snapshots using stored velocities (ships accelerate hard, so plain lerp would cut corners)
 function stateAt(o, t) {
+  if (o._ct === t) return o._cs;                 // draw, fleet panel and info all ask for the same instant every frame
+  const r = stateAtRaw(o, t); o._ct = t; o._cs = r; return r;
+}
+function stateAtRaw(o, t) {
   const k = rowIndex(t), k2 = Math.min(k + 1, D.n - 1);
   const t0 = D.t[k], h = D.t[k2] - t0, s = h > 0 ? (t - t0) / h : 0;
   const s2 = s * s, s3 = s2 * s;
@@ -455,6 +470,31 @@ function glyphShip(x, y, fwd, color, hollow, size) {
 function arrow(x0, y0, x1, y1, color) {
   ctx.strokeStyle = color; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
 }
+// Add a circle to the path, but only the part that can be on screen. A huge dashed circle (the hyper limit seen from fit zoom is
+// millions of pixels across) costs the rasteriser a dash per 18 px of circumference even when almost all of it is off screen.
+function arcVisible(cx, cy, r, W, H) {
+  if (r <= 4 * Math.max(W, H)) { ctx.arc(cx, cy, r, 0, 7); return; }
+  const cs = [[0, 0], [W, 0], [W, H], [0, H]].map(([x, y]) => [x - cx, y - cy]);
+  const ds = cs.map(c => Math.hypot(c[0], c[1]));
+  const inside = cx >= 0 && cx <= W && cy >= 0 && cy <= H;
+  if (!inside && (r < Math.min(...ds) - 1 || r > Math.max(...ds) + 1)) {
+    // the circle may still cross an edge between two corners, so test the nearest point of each edge too
+    let near = Infinity; const px = Math.min(Math.max(cx, 0), W), py = Math.min(Math.max(cy, 0), H); near = Math.hypot(px - cx, py - cy);
+    if (r < near - 1 || r > Math.max(...ds) + 1) return;
+  }
+  const mid = Math.atan2((H / 2) - cy, (W / 2) - cx);
+  let half = 0; for (const c of cs) { let d = Math.atan2(c[1], c[0]) - mid; d = Math.atan2(Math.sin(d), Math.cos(d)); half = Math.max(half, Math.abs(d)); }
+  half = Math.min(Math.PI, half + 0.02);
+  ctx.arc(cx, cy, r, mid - half, mid + half);
+}
+function drawTrail(o, t, span) {               // adds the trail's segments to the current path (no per-point arrays)
+  const k = rowIndex(t), t0 = t - span, fr = frameRows(), now = fr ? followPos(t) : null;
+  for (let i = k; i >= 0 && D.t[i] >= t0; i--) {
+    let x = o.pos[3 * i], y = o.pos[3 * i + 1];
+    if (fr) { x += now[0] - fr[2 * i]; y += now[1] - fr[2 * i + 1]; }
+    const q = toScr(x, y); ctx.lineTo(q[0], q[1]);
+  }
+}
 function trailPts(o, t, span) {
   const k = rowIndex(t), t0 = t - span, fr = frameRows(), now = fr ? followPos(t) : null; const pts = [];
   for (let i = k; i >= 0 && D.t[i] >= t0; i--) {
@@ -517,9 +557,8 @@ function draw() {
     let asGhost = false;
     if (persp !== "truth" && fac !== persp) asGhost = true;
     if ($("oTrails").checked && trailSpan > 0 && (!asGhost || showTruth)) {
-      const pts = trailPts(s, P.t, trailSpan); pts.unshift([st.p[0], st.p[1]]);
-      ctx.strokeStyle = col + "66"; ctx.lineWidth = 1; ctx.beginPath();
-      pts.forEach((q, i) => { const [x, y] = toScr(q[0], q[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      ctx.strokeStyle = col + "66"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx, sy);
+      drawTrail(s, P.t, trailSpan); ctx.stroke();
     }
     if (asGhost) {
       // faction perspective: enemy ships are shown only where light says they were
@@ -587,7 +626,7 @@ function draw() {
     if (hl) {
       const [sx, sy] = toScr(0, 0), r = hl / V.scale;
       ctx.strokeStyle = "#c58bff"; ctx.setLineDash([12, 6]); ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+      ctx.beginPath(); arcVisible(sx, sy, r, W, H); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
       circleLabel(sx, sy, r, `HYPER LIMIT · ${fmtDist(hl)} (${(hl / C / 60).toFixed(1)} light-min)`, "#c58bff");
     }
   }
@@ -596,9 +635,11 @@ function draw() {
 
   // recent event flashes (last ~1.5 real seconds of playback, at least 20 sim seconds)
   const flash = Math.max(20, P.speed * 1.5);
-  for (const e of D.events) {
+  const fe = D.flash; let lo = 0, hi = fe.length;                  // first flash event no older than the window
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (fe[mid].t < P.t - flash) lo = mid + 1; else hi = mid; }
+  for (let i = lo; i < fe.length; i++) {
+    const e = fe[i];
     if (e.t > P.t) break;
-    if (P.t - e.t > flash || !(e.type === "avoidance_maneuver" || e.type === "objective_complete" || e.type === "detonation")) continue;
     let p;
     if (e.type === "detonation") p = e.data.position_m; else { const o = D.byId[e.actor_id]; if (!o) continue; p = stateAt(o, P.t).p; }
     const [sx, sy] = toScr(p[0], p[1]); const f = (P.t - e.t) / flash;
@@ -621,15 +662,17 @@ function drawMissiles(W) {
   while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (rows[mid].t <= P.t) lo = mid; else hi = mid - 1; }
   const r0 = rows[lo], r1 = rows[lo + 1], dt = D.meta.missile_output_interval_s || D.meta.time_step_s;
   if (!r1 && P.t - r0.t > dt) return;
-  if (r1 && !r1.map) r1.map = Object.fromEntries(r1.missiles.map(m => [m.id, m]));
+  if (r1 && !r1.map) { const mp = new Map(); for (const m of r1.missiles) mp.set(m.id, m); r1.map = mp; }
+  if (r0.map && lo > 1) rows[lo - 2].map = null;                  // keep only the records near the playhead
   const fv = frameVel(P.t); let n = 0;
   for (const m of r0.missiles) {
-    const m1 = r1 && r1.map[m.id], tau = P.t - r0.t; let p;
-    if (m1) {                                     // Hermite between per-step records using stored velocities
-      const h = r1.t - r0.t, s = tau / h, s2 = s * s, s3 = s2 * s;
-      p = m.position_m.map((x, i) => (2 * s3 - 3 * s2 + 1) * x + (s3 - 2 * s2 + s) * h * m.velocity_m_s[i] + (-2 * s3 + 3 * s2) * m1.position_m[i] + (s3 - s2) * h * m1.velocity_m_s[i]);
-    } else p = m.position_m.map((x, i) => x + m.velocity_m_s[i] * tau);
-    const [sx, sy] = toScr(p[0], p[1]); n++;
+    const m1 = r1 && r1.map.get(m.id), tau = P.t - r0.t, p0 = m.position_m, v0 = m.velocity_m_s; let px, py;
+    if (m1) {                                     // Hermite between per-step records using stored velocities (x, y only: top-down map)
+      const h = r1.t - r0.t, s = tau / h, s2 = s * s, s3 = s2 * s, a = 2 * s3 - 3 * s2 + 1, b = (s3 - 2 * s2 + s) * h, c = -2 * s3 + 3 * s2, d = (s3 - s2) * h;
+      const p1 = m1.position_m, v1 = m1.velocity_m_s;
+      px = a * p0[0] + b * v0[0] + c * p1[0] + d * v1[0]; py = a * p0[1] + b * v0[1] + c * p1[1] + d * v1[1];
+    } else { px = p0[0] + v0[0] * tau; py = p0[1] + v0[1] * tau; }
+    const [sx, sy] = toScr(px, py); n++;
     if (sx < -60 || sx > W + 60 || sy < -60 || sy > cv.clientHeight + 60) continue;
     const col = factionColor(m.faction), vx = m.velocity_m_s[0] - fv[0], vy = m.velocity_m_s[1] - fv[1];
     const tail = Math.min(40, Math.hypot(vx, vy) * 2 / V.scale);
@@ -644,11 +687,18 @@ function drawStrip() {
   if (strip.width !== W * dpr) { strip.width = W * dpr; strip.height = H * dpr; }
   sctx.setTransform(dpr, 0, 0, dpr, 0, 0); sctx.clearRect(0, 0, W, H);
   if (!D) return;
-  for (const e of D.events) {
-    if (e.type.startsWith("sensor_") || e.type === "maneuver_command" || e.type.startsWith("missile_")) continue;
-    sctx.fillStyle = e.type === "detonation" ? "#ff5a4f" : e.type === "avoidance_maneuver" ? css("--warn") : "#7bf0a5";
-    sctx.fillRect(e.t / D.tEnd * (W - 2), 2, 2, H - 4);
+  const key = W + "x" + H + "x" + dpr + css("--warn");           // event marks only change when the strip is resized or re-themed
+  if (D.stripKey !== key) {
+    const c = D.stripImg = document.createElement("canvas"); c.width = strip.width; c.height = strip.height;
+    const x = c.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const e of D.events) {
+      if (e.type.startsWith("sensor_") || e.type === "maneuver_command" || e.type.startsWith("missile_")) continue;
+      x.fillStyle = e.type === "detonation" ? "#ff5a4f" : e.type === "avoidance_maneuver" ? css("--warn") : "#7bf0a5";
+      x.fillRect(e.t / D.tEnd * (W - 2), 2, 2, H - 4);
+    }
+    D.stripKey = key;
   }
+  sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.drawImage(D.stripImg, 0, 0); sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   sctx.fillStyle = css("--hi"); sctx.fillRect(P.t / D.tEnd * (W - 2), 0, 2, H);
 }
 
@@ -722,6 +772,29 @@ function updateFleet() {
 }
 
 // ---------------------------------------------------------------- loop
+// frame-time instrumentation: per-stage cost (ms, smoothed) and frame interval; shown when "frame timing" is on, and
+// ?bench=N runs N frames back to back at the opening time and writes the averages to <pre id=bench> and the console
+const PERF = {
+  on: false, ms: { draw: 0, strip: 0, info: 0, fleet: 0 }, dt: 0, work: 0, _acc: null, _frameWork: 0,
+  run(name, fn) { const a = performance.now(); fn(); const d = performance.now() - a; this._frameWork += d; this.ms[name] += (d - this.ms[name]) * 0.1; if (this._acc) this._acc[name] = (this._acc[name] || 0) + d; },
+  frame(now) {
+    if (this._last) this.dt += (now - this._last - this.dt) * 0.1; this._last = now;
+    this.work += (this._frameWork - this.work) * 0.1;
+    if (this._acc && ++this._acc.skip > 20) { const A = this._acc; A.n++; A.work = (A.work || 0) + this._frameWork; (A._w = A._w || []).push(this._frameWork); if (this._last2) (A._g = A._g || []).push(now - this._last2); }
+    this._last2 = now;
+    this._frameWork = 0;
+    $("perf").classList.toggle("hidden", !this.on);
+    if (this.on) $("perf").textContent = `frame ${this.dt.toFixed(1)} ms (${(1000 / (this.dt || 1)).toFixed(0)} fps) · work ${this.work.toFixed(1)} ms\n` +
+      Object.entries(this.ms).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(" · ");
+  },
+};
+$("oPerf").onchange = e => { PERF.on = e.target.checked; };
+function bench(n) {
+  PERF._acc = { n: 0, skip: 0 };
+  return new Promise(res => { const tick = () => { if (PERF._acc.n >= n) { const a = PERF._acc; PERF._acc = null;
+      const out = {}; for (const k in a) if (k !== "n" && k !== "skip" && k[0] !== "_") out[k] = +(a[k] / a.n).toFixed(2); out.frames = a.n; const pct = (arr, q) => { const x = [...arr].sort((u, v) => u - v); return +x[Math.min(x.length - 1, Math.floor(q * x.length))].toFixed(1); };
+      out.workP95 = pct(a._w, .95); out.workMax = pct(a._w, 1); out.gapP95 = pct(a._g, .95); out.gapMax = pct(a._g, 1); out.heapMB = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : null; out.t = P.t; res(out); } else requestAnimationFrame(tick); }; tick(); });
+}
 let last = performance.now();
 function frame(now) {
   const dt = (now - last) / 1000; last = now;
@@ -729,7 +802,8 @@ function frame(now) {
     if (P.playing) { P.t += dt * P.speed; if (P.t >= D.tEnd) { P.t = D.tEnd; P.playing = false; } $("scrub").value = P.t; }
     $("play").textContent = P.playing ? "⏸ Pause" : "▶ Play"; $("play").classList.toggle("on", P.playing);
     $("clock").textContent = fmtClock(P.t) + "  ·  " + P.speed + "×";
-    draw(); drawStrip(); updateInfo(); updateFleet();
+    PERF.run("draw", draw); PERF.run("strip", drawStrip); PERF.run("info", updateInfo); PERF.run("fleet", updateFleet);
+    PERF.frame(now);
   }
   requestAnimationFrame(frame);
 }

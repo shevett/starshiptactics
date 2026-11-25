@@ -128,10 +128,12 @@ behaviour is active. The report (`python3 -m simulator report <run>`) lists cont
 - Engage guidance assumes the target and group fall together (no gravity compensation) and extrapolates the target at
   constant velocity.
 - Destroyed-ness is judged by true integrity (perfect battle damage assessment). A ship at or below
-  `doctrine.engagement.destroyed_integrity` (placeholder 0.05) becomes a **hulk**: a `ship_destroyed` event is emitted,
-  and it stops thrusting, steering and firing, then drifts on its momentum under gravity. Hulks no longer count for group
-  centres, escape plans or termination. Below that threshold damage still does not degrade capability (no partial
-  damage model yet), and missiles already launched by a hulk keep flying.
+  `doctrine.engagement.destroyed_integrity` (placeholder 0.05) is a **hulk**: `ship_destroyed` is emitted and it drifts on
+  its momentum. Above that, **partial damage** applies: `doctrine.damage` has piecewise-linear curves (integrity -> factor)
+  for thrust (max acceleration), rotation (turn rate) and fire (tubes in action, which scales salvo size). Everything that
+  reads a ship's limits sees the degraded values, including braking curves and the escape planner (slowest ship in the
+  group). Not yet degraded: sensors, missile defence, wedge geometry, magazine loss. Hulks no longer count for group
+  centres, escape plans or termination; missiles a hulk already launched keep flying.
 
 ## Toward a doctrine builder
 

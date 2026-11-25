@@ -29,3 +29,37 @@ class Hulk(unittest.TestCase):
             self.assertTrue(np.allclose(dead0["velocity_m_s"], dead1["velocity_m_s"], rtol=1e-3))   # no thrust: only gravity acts
             self.assertTrue(dead1.get("destroyed"))
             self.assertGreater(np.linalg.norm(np.array(live1["velocity_m_s"]) - [2.0e6, 0, 0]), 1.0e5)   # live ship manoeuvres
+
+
+class PartialDamage(unittest.TestCase):
+    def _sim(self, d, integrity):
+        units = [unit("a", "red", pos=(5.0e10, 0, 0), vel=(0, 0, 0), objective={"type": "transit_to_point", "destination_km": [1e9, 0, 0]})]
+        cfg = load_config(write_scenario(d, scenario={"duration_s": 120}, units=units), REPO)
+        sim = Simulation(cfg)
+        sim.integrity[0] = integrity
+        sim._apply_damage(0)
+        return sim
+
+    def test_curves_scale_the_limits(self):
+        with tempfile.TemporaryDirectory() as d:
+            sim = self._sim(d, 1.0)
+            self.assertAlmostEqual(sim.capability("thrust", 1.0), 1.0)
+            self.assertAlmostEqual(sim.capability("thrust", 0.3), 0.5)
+            self.assertAlmostEqual(sim.capability("thrust", 0.45), 0.675)       # linear between points
+            self.assertAlmostEqual(sim.capability("thrust", 0.0), 0.1)           # end values hold outside the range
+            full = sim.amax0[0]
+            dam = self._sim(d, 0.3)
+            self.assertAlmostEqual(dam.amax[0], 0.5 * full)
+            self.assertLess(dam.rate[0], dam.rate0[0])
+            self.assertLess(dam.fire_f[0], 1.0)
+
+    def test_a_damaged_ship_accelerates_less(self):
+        speeds = []
+        for integ in (1.0, 0.3):
+            with tempfile.TemporaryDirectory() as d:
+                sim = self._sim(d, integ)
+                out = Path(d) / "o"
+                sim.run(out)
+                row = states(out)[-1]
+                speeds.append(float(np.linalg.norm(ship(row, sim.ids[0])["velocity_m_s"])))
+        self.assertLess(speeds[1], 0.7 * speeds[0])

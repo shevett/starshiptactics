@@ -23,7 +23,53 @@ def main(argv=None):
     rp = sub.add_parser("report", help="write an after-action analysis report (HTML) for a finished run")
     rp.add_argument("run", help="run directory, e.g. output/incursion01")
     rp.add_argument("--out", default=None, help="output file (default: <run>/report.html)")
+    rn = sub.add_parser("render", help="render a cinematic clip of a finished run with Blender (see docs/RENDER.md)")
+    rn.add_argument("run", help="run directory, e.g. output/incursion02")
+    rn.add_argument("--target", help="ship the camera follows (default: the first ship hit)")
+    rn.add_argument("--t0", type=float, help="start, simulated seconds (default: just before the target's first hit)")
+    rn.add_argument("--t1", type=float, help="end, simulated seconds (default: t0 + 150)")
+    rn.add_argument("--speed", type=float, default=15.0, help="simulated seconds per second of film (default 15)")
+    rn.add_argument("--fps", type=int, default=24)
+    rn.add_argument("--ship-scale", type=float, default=40.0, help="hull enlargement, so formations are visible (default 40)")
+    rn.add_argument("--cam-dist", type=float, default=4.0, help="camera distance in target hull lengths (default 4)")
+    rn.add_argument("--res", default="1280x720")
+    rn.add_argument("--engine", choices=("eevee", "cycles"), default="eevee")
+    rn.add_argument("--name", default="clip", help="output goes to <run>/render/<name>/")
+    rn.add_argument("--frames", help="render only frames a:b (for a quick look)")
+    rn.add_argument("--shot-only", action="store_true", help="write shot.json and stop (no Blender)")
     args = ap.parse_args(argv)
+
+    if args.cmd == "render":
+        import shutil
+        import subprocess
+        from .render import shot as shot_mod
+        repo = Path(__file__).resolve().parent.parent
+        out = Path(args.run) / "render" / args.name
+        try:
+            sh = shot_mod.build(args.run, out, repo, target=args.target, t0=args.t0, t1=args.t1, speed=args.speed, fps=args.fps,
+                                ship_scale=args.ship_scale, resolution=tuple(int(x) for x in args.res.lower().split("x")),
+                                engine=args.engine, cam_dist=args.cam_dist)
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"render: {exc}", file=sys.stderr)
+            return 2
+        print(f"Shot: {sh['target']} T+{sh['t0']:.0f}..{sh['t1']:.0f} s, {sh['frames']} frames at {sh['fps']} fps -> {out}/shot.json")
+        if args.shot_only:
+            return 0
+        blender = shutil.which("blender")
+        if not blender:
+            print("render: blender not found on PATH", file=sys.stderr)
+            return 2
+        cmd = [blender, "-b", "-P", str(Path(__file__).resolve().parent / "render" / "blender_scene.py"), "--", str(out / "shot.json")]
+        if args.frames:
+            cmd += ["--frames", args.frames]
+        if subprocess.run(cmd).returncode:
+            return 1
+        if shutil.which("ffmpeg") and not args.frames:
+            mp4 = out / f"{args.name}.mp4"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(args.fps), "-i", str(out / "frames" / "%05d.png"),
+                            "-pix_fmt", "yuv420p", "-crf", "18", str(mp4)], check=False)
+            print(f"Wrote {mp4}")
+        return 0
 
     if args.cmd == "report":
         from .report import write
