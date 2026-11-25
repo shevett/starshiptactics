@@ -1,0 +1,28 @@
+# Launch, chase, kill: the missile that destroyed a ship, from the ship that fired it, ridden to impact, then the
+# target breaking up seen from outside. $target comes from --target; without it, the last ship destroyed.
+anchors:
+  kill:   {event: ship_destroyed, ship: $target, which: last}
+  killer: {missile_that_killed: kill.ship}
+
+shots:
+  - name: launch                       # side-on to the direction the salvo leaves in, slow motion
+    follow: killer.launcher
+    camera: {rig: orbit, distance: 2.6, azimuth: [108, 82], elevation: 10, relative_to: killer.heading}
+    start: killer.launch - 0.35
+    end: killer.launch + 1.1
+    duration: 2.5
+
+  - name: chase                        # behind the missile; the target grows at a steady rate
+    follow: killer.missile
+    camera: {rig: chase, back: 8, lift: 1}
+    start: killer.launch + 1
+    duration: 7.0
+    pacing: closing
+    end_range: 0.75
+
+  - name: kill                         # from just before impact through the break-up
+    follow: kill.ship
+    camera: {rig: orbit, distance: 2.4, azimuth: [50, 75]}
+    start: kill - 0.45
+    duration: 2.0
+    speed: 3.0

@@ -1,0 +1,33 @@
+# Shot list for incursion02: the destruction of red_majestics-003. Format: docs/RENDER.md.
+#   python3 -m simulator render output/incursion02 --shots scenarios/incursion02.shots.yaml
+film:
+  fps: 24
+  resolution: [1280, 720]
+  ship_scale: 40
+
+anchors:
+  kill:   {event: ship_destroyed, ship: red_majestics-003}
+  killer: {missile_that_killed: red_majestics-003}
+
+shots:
+  - name: launch
+    follow: killer.launcher
+    camera: {rig: orbit, distance: 2.6, azimuth: [108, 82], elevation: 10, relative_to: killer.heading}
+    start: killer.launch - 0.35
+    end: killer.launch + 1.1
+    duration: 2.5
+
+  - name: chase
+    follow: killer.missile
+    camera: {rig: chase, back: 8, lift: 1, swing: [-12, 12]}
+    start: killer.launch + 1
+    duration: 7.0
+    pacing: closing
+    end_range: 0.75
+
+  - name: kill
+    follow: kill.ship
+    camera: {rig: orbit, distance: 2.4, azimuth: [50, 75]}
+    start: kill - 0.45
+    duration: 2.0
+    speed: 3.0

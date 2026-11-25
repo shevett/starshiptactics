@@ -29,36 +29,41 @@ def main(argv=None):
     rn.add_argument("--t0", type=float, help="start, simulated seconds (default: just before the target's first hit)")
     rn.add_argument("--t1", type=float, help="end, simulated seconds (default: t0 + 150)")
     rn.add_argument("--speed", type=float, default=15.0, help="simulated seconds per second of film (default 15)")
-    rn.add_argument("--fps", type=int, default=24)
-    rn.add_argument("--ship-scale", type=float, default=40.0, help="hull enlargement, so formations are visible (default 40)")
+    rn.add_argument("--fps", type=int, help="frame rate (default 24)")
+    rn.add_argument("--ship-scale", type=float, help="hull enlargement, so formations are visible (default 40)")
     rn.add_argument("--cam-dist", type=float, default=4.0, help="camera distance in target hull lengths (default 4)")
-    rn.add_argument("--res", default="1280x720")
-    rn.add_argument("--engine", choices=("eevee", "cycles"), default="eevee")
-    rn.add_argument("--name", default="clip", help="output goes to <run>/render/<name>/")
+    rn.add_argument("--res", help="resolution (default 1280x720)")
+    rn.add_argument("--engine", choices=("eevee", "cycles"), help="default eevee")
+    rn.add_argument("--name", help="output goes to <run>/render/<name>/ (default: the shot list's name, or clip)")
     rn.add_argument("--frames", help="render only frames a:b (for a quick look)")
     rn.add_argument("--sequence", choices=("kill",), help="kill: launch, missile chase and destruction of --target (default: the last ship destroyed)")
+    rn.add_argument("--shots", help="a shot list file (see docs/RENDER.md), e.g. scenarios/incursion02.shots.yaml")
     rn.add_argument("--shot-only", action="store_true", help="write shot.json and stop (no Blender)")
     args = ap.parse_args(argv)
 
     if args.cmd == "render":
         import shutil
         import subprocess
-        from .render import shot as shot_mod
+        from .render import shot as shot_mod, shotlist
+        from .render.interp import Run
         repo = Path(__file__).resolve().parent.parent
-        out = Path(args.run) / "render" / args.name
-        res = tuple(int(x) for x in args.res.lower().split("x"))
+        listed = Path(args.shots) if args.shots else shotlist.BUILTIN / f"{args.sequence}.yaml" if args.sequence else None
+        name = args.name or (listed.name.split(".")[0] if args.shots else "clip")
+        out = Path(args.run) / "render" / name
+        res = [int(x) for x in args.res.lower().split("x")] if args.res else None
         try:
-            if args.sequence == "kill":
-                from .render.interp import Run
+            spec = shotlist.load(listed) if listed else {}
+            film = shotlist.film_settings(spec, fps=args.fps, ship_scale=args.ship_scale, resolution=res, engine=args.engine)
+            common = dict(fps=film["fps"], ship_scale=film["ship_scale"], resolution=tuple(film["resolution"]), engine=film["engine"])
+            if listed:
                 run = Run(args.run)
-                shot_mod._class_dims(run, repo)
-                plan = shot_mod.kill_sequence(run, args.target, fps=args.fps, ship_scale=args.ship_scale)
-                print(f"Sequence: {plan['missile']} from {plan['launcher']} at T+{plan['launch_t']:.0f} s, hits {plan['target']} at T+{plan['impact_t']:.1f} s")
-                sh = shot_mod.build_sequence(run, out, repo, plan["shots"], fps=args.fps, target=plan["target"], hero=plan["missile"],
-                                             ship_scale=args.ship_scale, resolution=res, engine=args.engine)
+                plan = shotlist.plan(run, spec, repo, {"target": args.target}, fps=film["fps"], ship_scale=film["ship_scale"])
+                for k, a in plan["anchors"].items():
+                    print(f"  anchor {k}: T+{a['t']:.2f} s " + ", ".join(f"{x}={v}" for x, v in a.items() if isinstance(v, str)))
+                sh = shot_mod.build_sequence(run, out, repo, plan["shots"], hero=plan["heroes"], **common)
             else:
-                sh = shot_mod.build(args.run, out, repo, target=args.target, t0=args.t0, t1=args.t1, speed=args.speed, fps=args.fps,
-                                    ship_scale=args.ship_scale, resolution=res, engine=args.engine, cam_dist=args.cam_dist)
+                sh = shot_mod.build(args.run, out, repo, target=args.target, t0=args.t0, t1=args.t1, speed=args.speed,
+                                    cam_dist=args.cam_dist, **common)
         except (ValueError, FileNotFoundError) as exc:
             print(f"render: {exc}", file=sys.stderr)
             return 2
@@ -77,8 +82,8 @@ def main(argv=None):
         if subprocess.run(cmd).returncode:
             return 1
         if shutil.which("ffmpeg") and not args.frames:
-            mp4 = out / f"{args.name}.mp4"
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(args.fps), "-i", str(out / "frames" / "%05d.png"),
+            mp4 = out / f"{name}.mp4"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(sh["fps"]), "-i", str(out / "frames" / "%05d.png"),
                             "-pix_fmt", "yuv420p", "-crf", "18", str(mp4)], check=False)
             print(f"Wrote {mp4}")
         return 0

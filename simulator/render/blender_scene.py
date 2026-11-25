@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import bpy
+import numpy as np
 from mathutils import Quaternion, Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -179,24 +180,73 @@ def import_asset(path, name):
     return root
 
 
-# ------------------------------------------------------------------ world: black sky with stars, a little fill light
+# ------------------------------------------------------------------ sky: a fixed field of stars beyond everything else
+# The stars do not move with the scene origin, so any drift of the background is the camera turning.
 world = bpy.data.worlds.new("space")
 scene.world = world
 try:
     world.use_nodes = True
 except Exception:
     pass
-nt = world.node_tree
-nt.nodes.clear()
-w_out, bg = nt.nodes.new("ShaderNodeOutputWorld"), nt.nodes.new("ShaderNodeBackground")
-vor, ramp = nt.nodes.new("ShaderNodeTexVoronoi"), nt.nodes.new("ShaderNodeValToRGB")
-vor.inputs["Scale"].default_value = 260.0
-ramp.color_ramp.elements[0].position, ramp.color_ramp.elements[0].color = 0.0, (1.0, 1.0, 1.0, 1.0)
-ramp.color_ramp.elements[1].position, ramp.color_ramp.elements[1].color = 0.06, (0.004, 0.004, 0.006, 1.0)
-nt.links.new(vor.outputs["Distance"], ramp.inputs["Fac"])
-nt.links.new(ramp.outputs["Color"], bg.inputs["Color"])
-bg.inputs["Strength"].default_value = 1.0
-nt.links.new(bg.outputs[0], w_out.inputs["Surface"])
+wt = world.node_tree
+wt.nodes.clear()
+w_out, w_bg = wt.nodes.new("ShaderNodeOutputWorld"), wt.nodes.new("ShaderNodeBackground")
+w_bg.inputs["Color"].default_value = (0.003, 0.003, 0.004, 1.0)      # a trace of ambient light, no more
+wt.links.new(w_bg.outputs[0], w_out.inputs["Surface"])
+
+
+def starfield(n_field=7000, n_band=9000, seed=7):
+    """One mesh of small soft dots on a sphere just inside the far clip: a uniform field plus a denser, fainter band
+    (a galactic plane), with a few bright stars and many dim ones. Always the same sky (fixed seed)."""
+    rng = np.random.default_rng(seed)
+    d = rng.normal(size=(n_field, 3))
+    lon, lat = rng.uniform(0, 2 * np.pi, n_band), rng.normal(0.0, math.radians(7.0), n_band)
+    tilt = math.radians(60.0)                               # the band is tilted out of the ecliptic
+    bx, by, bz = np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)
+    band = np.stack([bx, by * math.cos(tilt) - bz * math.sin(tilt), by * math.sin(tilt) + bz * math.cos(tilt)], axis=1)
+    d = np.concatenate([d, band])
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    n = len(d)
+    bright = np.minimum(0.25 * rng.uniform(0.004, 1.0, n) ** -0.75, 14.0)        # many dim, a few brilliant
+    bright[n_field:] *= 0.6
+    tint = np.array([[0.7, 0.8, 1.0], [0.9, 0.93, 1.0], [1.0, 1.0, 1.0], [1.0, 0.93, 0.8], [1.0, 0.75, 0.55]])[rng.choice(5, n, p=[0.15, 0.25, 0.3, 0.2, 0.1])]
+    px = 36.0 / shot["lens_mm"] / shot["resolution"][0]    # the angle one pixel covers, radians
+    R = shot["far"] * 1.4
+    size = R * px * (1.1 + 0.5 * np.log1p(bright))          # radius of the dot: a pixel or two, a little more when bright
+    u = np.cross(d, [0.0, 0.0, 1.0]) + 1e-9
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    v = np.cross(d, u)
+    ang = np.arange(6) * math.pi / 3
+    rim = d[:, None, :] * R + size[:, None, None] * (np.cos(ang)[None, :, None] * u[:, None, :] + np.sin(ang)[None, :, None] * v[:, None, :])
+    verts = np.concatenate([(d * R)[:, None, :], rim], axis=1).reshape(-1, 3)      # per star: its centre, then six rim points
+    base = np.arange(n)[:, None] * 7
+    k = np.arange(6)
+    faces = np.stack([np.broadcast_to(base, (n, 6)), base + 1 + k, base + 1 + (k + 1) % 6], axis=2).reshape(-1, 3)
+    me = bpy.data.meshes.new("stars")
+    me.vertices.add(len(verts)); me.vertices.foreach_set("co", verts.ravel())
+    me.loops.add(faces.size); me.loops.foreach_set("vertex_index", faces.ravel())
+    me.polygons.add(len(faces)); me.polygons.foreach_set("loop_start", np.arange(len(faces)) * 3); me.polygons.foreach_set("loop_total", np.full(len(faces), 3))
+    me.update(calc_edges=True)
+    rgba = np.zeros((n, 7, 4))                               # bright at the centre, black at the rim: a soft dot
+    rgba[:, 0, :3], rgba[:, :, 3] = tint * bright[:, None], 1.0
+    me.color_attributes.new("light", "FLOAT_COLOR", "POINT").data.foreach_set("color", rgba.ravel())
+    m = bpy.data.materials.new("stars")
+    m.use_nodes = True
+    nt = m.node_tree
+    nt.nodes.clear()
+    out, em, at = nt.nodes.new("ShaderNodeOutputMaterial"), nt.nodes.new("ShaderNodeEmission"), nt.nodes.new("ShaderNodeAttribute")
+    at.attribute_name = "light"
+    nt.links.new(at.outputs["Color"], em.inputs["Color"])
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
+    me.materials.append(m)
+    ob = bpy.data.objects.new("stars", me)
+    ob.visible_shadow = False
+    col.objects.link(ob)
+    return ob
+
+
+if shot.get("stars", True):
+    starfield()
 
 # ------------------------------------------------------------------ ships
 S = shot["mesh_scale"]
@@ -221,10 +271,11 @@ for s in shot["ships"]:
     ships.append((s, ob, parts))
 
 # ------------------------------------------------------------------ bodies, sunlight
+SUN_GLOW = 400.0                                         # far brighter than anything else, so only the sun flares
 bodies = []
 for b in shot["bodies"]:
     star = b["type"] == "star"
-    mat = glow("m_" + b["id"], (1.0, 0.93, 0.8), 30.0) if star else material("m_" + b["id"], base=(0.25, 0.4, 0.6))
+    mat = glow("m_" + b["id"], (1.0, 0.93, 0.8), SUN_GLOW) if star else material("m_" + b["id"], base=(0.25, 0.4, 0.6))
     bodies.append((b, primitive("primitive_uv_sphere_add", b["id"], mat, radius=1.0, segments=48, ring_count=24)))
 sun = bpy.data.objects.new("sunlight", bpy.data.lights.new("sunlight", "SUN"))
 sun.data.energy = 9.0
@@ -271,7 +322,8 @@ for i in range(min(n_flash, 4)):                         # a few point lights so
 # ------------------------------------------------------------------ camera, render settings
 cam = bpy.data.objects.new("camera", bpy.data.cameras.new("camera"))
 cam.data.lens = shot["lens_mm"]
-cam.data.clip_start, cam.data.clip_end = 0.05, shot["far"] * 1.5
+# the near clip is as far out as it can go: depth precision at the far end (sun, planets, then stars) depends on it
+cam.data.clip_start, cam.data.clip_end = 0.5, shot["far"] * 2.0
 cam.rotation_mode = "QUATERNION"
 col.objects.link(cam)
 scene.camera = cam
@@ -293,6 +345,32 @@ try:
     scene.view_settings.look = "AgX - Medium High Contrast"
 except Exception:
     pass
+
+
+def lens_glare():
+    """Compositor: a soft bloom on everything bright, and star-shaped streaks on the sun alone (a lens flare)."""
+    tree = bpy.data.node_groups.new("lens", "CompositorNodeTree")
+    tree.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    src, out = tree.nodes.new("CompositorNodeRLayers"), tree.nodes.new("NodeGroupOutput")
+    last = src.outputs["Image"]
+    for kind, opts in (("Bloom", {"Threshold": 2.0, "Strength": 0.35, "Size": 0.35}),
+                       ("Streaks", {"Threshold": SUN_GLOW * 0.25, "Strength": 0.25, "Streaks": 6, "Fade": 0.93, "Iterations": 4}),
+                       ("Ghosts", {"Threshold": SUN_GLOW * 0.25, "Strength": 0.08, "Iterations": 3})):
+        g = tree.nodes.new("CompositorNodeGlare")
+        g.inputs["Type"].default_value = kind
+        for k, v in opts.items():
+            g.inputs[k].default_value = v
+        tree.links.new(last, g.inputs["Image"])
+        last = g.outputs["Image"]
+    tree.links.new(last, out.inputs[0])
+    scene.compositing_node_group = tree
+    r.use_compositing = True
+
+
+try:
+    lens_glare()
+except Exception as exc:                                  # the compositor's Python interface differs between Blender versions
+    print("RENDER no lens glare:", exc)
 print("RENDER engine", r.engine, "frames", len(frames), "streak pool", n_streak, "flash pool", n_flash)
 
 HULL_LIVE, HULL_DEAD = (1.0, 1.0, 1.0, 1.0), (0.22, 0.2, 0.2, 1.0)

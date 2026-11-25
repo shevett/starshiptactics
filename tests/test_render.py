@@ -7,7 +7,7 @@ import numpy as np
 
 from simulator.config import load_config
 from simulator.engine import Simulation
-from simulator.render import hulls, shot
+from simulator.render import hulls, shot, shotlist
 from simulator.render.interp import Run, hermite, slerp
 
 from .helpers import REPO, unit, write_scenario
@@ -71,31 +71,82 @@ class Shot(unittest.TestCase):
             self.assertTrue(json.loads((Path(d) / "shot" / "shot.json").read_text())["frames"] == 96)
 
 
+class ShotList(unittest.TestCase):
+    def test_three_of_four_time_settings_give_the_fourth(self):
+        self.assertEqual(shotlist.solve_time(10.0, 16.0, 2.0, None), (10.0, 16.0, 2.0, 3.0))
+        self.assertEqual(shotlist.solve_time(10.0, None, 2.0, 3.0), (10.0, 16.0, 2.0, 3.0))
+        self.assertEqual(shotlist.solve_time(None, 16.0, 2.0, 3.0), (10.0, 16.0, 2.0, 3.0))
+        self.assertEqual(shotlist.solve_time(10.0, 16.0, None, 3.0), (10.0, 16.0, 2.0, 3.0))
+        for bad in ((10.0, 16.0, None, None), (10.0, 16.0, 2.0, 3.0), (16.0, 10.0, 2.0, None)):
+            with self.assertRaises(shotlist.ShotListError):
+                shotlist.solve_time(*bad)
+
+    def test_times_are_numbers_or_anchors_with_offsets(self):
+        anchors = {"kill": {"t": 100.0, "ship": "a"}, "m": {"t": 90.0, "launch": 40.0}}
+        tm = lambda x: shotlist._time(x, anchors, {}, "test")
+        self.assertEqual([tm(12), tm("12.5"), tm("kill"), tm("kill - 0.5"), tm("m.launch+2")], [12.0, 12.5, 100.0, 99.5, 42.0])
+        for bad in ("nope", "kill.ship", "kill * 2", "m.nothing"):
+            with self.assertRaises(shotlist.ShotListError):
+                tm(bad)
+
+    def test_a_list_is_resolved_against_a_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            units = [unit("a", "red", pos=(5.0e10, 0, 0), vel=(2000, 0, 0), objective={"type": "coast"})]
+            cfg = load_config(write_scenario(d, scenario={"duration_s": 120}, units=units), REPO)
+            out = Path(d) / "o"
+            Simulation(cfg).run(out)
+            run = Run(out)
+            spec = {"anchors": {"mid": {"time": 60}},
+                    "shots": [{"name": "one", "follow": run.ships[0], "start": "mid - 10", "duration": 2.0, "speed": 5.0,
+                               "camera": {"distance": 3, "azimuth": 90}}]}
+            plan = shotlist.plan(run, spec, REPO, fps=24)
+            sp = plan["shots"][0]
+            self.assertEqual((len(sp["times"]), sp["times"][0], sp["origin"]), (48, 50.0, ("ship", run.ships[0])))
+            self.assertEqual(sp["rig"]["azimuth_deg"], [90.0, 90.0])
+            self.assertEqual(shot.build_sequence(run, Path(d) / "s", REPO, plan["shots"])["frames"], 48)
+            for change in ({"follow": "nobody"}, {"speeed": 1}, {"camera": {"rig": "crane"}}, {"camera": {"rig": "chase"}},
+                           {"start": "later"}, {"start": 500}, {"end": 70}):
+                with self.assertRaises(shotlist.ShotListError, msg=str(change)):
+                    shotlist.plan(run, {**spec, "shots": [{**spec["shots"][0], **change}]}, REPO)
+            with self.assertRaises(shotlist.ShotListError):                              # an anchor that finds nothing stops the render
+                shotlist.plan(run, {**spec, "anchors": {"kill": {"event": "ship_destroyed", "ship": run.ships[0]}}}, REPO)
+
+
 @unittest.skipUnless((REPO / "output" / "incursion02" / "missiles.jsonl").exists(), "needs a finished incursion02 run in output/")
 class KillSequence(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.run_ = Run(REPO / "output" / "incursion02")
-        shot._class_dims(cls.run_, REPO)
-        cls.plan = shot.kill_sequence(cls.run_)
+        cls.plan = shotlist.plan(cls.run_, shotlist.load(shotlist.BUILTIN / "kill.yaml"), REPO, {"target": None})
+        cls.killer = cls.plan["anchors"]["killer"]
 
     def test_missile_leaves_from_its_launcher(self):
-        run, plan = self.run_, self.plan
-        at_launch = run.missile_pos(plan["missile"], plan["launch_t"])
-        self.assertLess(np.linalg.norm(at_launch - run.state(plan["launcher"], plan["launch_t"])["p"]), 1.0)
-        self.assertIsNone(run.missile_pos(plan["missile"], plan["launch_t"] - 1.0))
-        self.assertIn(plan["missile"], run.missiles_alive(plan["launch_t"] + 0.5))       # before its first stored record
+        run, k = self.run_, self.killer
+        at_launch = run.missile_pos(k["missile"], k["launch"])
+        self.assertLess(np.linalg.norm(at_launch - run.state(k["launcher"], k["launch"])["p"]), 1.0)
+        self.assertIsNone(run.missile_pos(k["missile"], k["launch"] - 1.0))
+        self.assertIn(k["missile"], run.missiles_alive(k["launch"] + 0.5))               # before its first stored record
 
     def test_chase_closes_on_the_target_at_a_steady_rate(self):
-        run, plan = self.run_, self.plan
-        chase = plan["shots"][1]
-        ts = chase["times"]
+        run, k = self.run_, self.killer
+        ts = self.plan["shots"][1]["times"]
         self.assertTrue(all(b >= a for a, b in zip(ts, ts[1:])))
-        self.assertLessEqual(ts[-1], plan["impact_t"])
-        rng = [np.linalg.norm(run.missile_pos(plan["missile"], t) - run.state(plan["target"], t)["p"]) for t in ts]
+        self.assertLessEqual(ts[-1], k["impact"])
+        rng = [np.linalg.norm(run.missile_pos(k["missile"], t) - run.state(k["target"], t)["p"]) for t in ts]
         ratio = np.array(rng[1:]) / np.array(rng[:-1])
         self.assertTrue(np.allclose(ratio, ratio[0], rtol=1e-3))                        # same shrink factor every frame
-        self.assertEqual([s["name"] for s in plan["shots"]], ["launch", "chase", "kill"])
+        self.assertEqual([s["name"] for s in self.plan["shots"]], ["launch", "chase", "kill"])
+
+    def test_the_scenario_list_matches_the_built_in_sequence(self):
+        mine = shotlist.plan(self.run_, shotlist.load(REPO / "scenarios" / "incursion02.shots.yaml"), REPO)
+        self.assertEqual(mine["anchors"]["killer"]["missile"], self.killer["missile"])
+        self.assertEqual(self.plan["anchors"]["kill"]["ship"], "red_majestics-003")       # the last ship destroyed
+        for a, b in zip(mine["shots"], self.plan["shots"]):
+            self.assertEqual((a["origin"], a["times"]), (b["origin"], b["times"]))
+
+    def test_a_ship_that_survived_stops_the_render(self):
+        with self.assertRaises(shotlist.ShotListError):
+            shotlist.plan(self.run_, shotlist.load(shotlist.BUILTIN / "kill.yaml"), REPO, {"target": "blue_defenders-001"})
 
 
 if __name__ == "__main__":

@@ -11,30 +11,85 @@ python3 -m simulator render output/incursion02 --frames 30:40        # a quick l
 python3 -m simulator render output/incursion02 --shot-only           # write shot.json, do not start Blender
 ```
 
-### Sequences
+### Shot lists
 
-`--sequence kill` builds a three-shot sequence around the destruction of `--target` (default: the last ship destroyed):
+A film of more than one shot is described in a shot list, a YAML file kept beside its scenario:
 
 ```
-python3 -m simulator render output/incursion02 --sequence kill --target red_majestics-003 --name killseq
+python3 -m simulator render output/incursion02 --shots scenarios/incursion02.shots.yaml
+python3 -m simulator render output/incursion02 --shots scenarios/incursion02.shots.yaml --shot-only    # check it resolves; no Blender
+python3 -m simulator render output/incursion02 --sequence kill --target red_majestics-003             # the built-in list
 ```
 
-1. **launch**: the ship that fired the killing missile, side-on to the direction the salvo leaves in, in slow motion.
-2. **chase**: the camera rides behind that missile to its target. The range shrinks by the same factor every frame, so
-   the cruise is compressed into the first second and the final approach runs in extreme slow motion.
-3. **kill**: an orbit of the target from just before impact through its break-up.
+`--sequence kill` uses the built-in list `simulator/render/sequences/kill.yaml` (launch, missile chase, destruction of
+`--target`; without `--target`, the last ship destroyed). Copy it to start a new list.
 
-Each shot has its own scene origin (a ship or a missile), camera rig and frame-to-time mapping (`shot.py`:
-`orbit_shot`, `chase_shot`, `kill_sequence`, `build_sequence`). Effect lifetimes (flashes, glow) are in seconds of film,
-so they look the same at any playback speed. A missile near the camera that moves little across the frame is drawn as
-a model with a drive glow; a fast one as a streak. The missiles of a salvo share one position in the simulation, so
-their models are spread into a loose ring around it (cosmetic).
+```yaml
+film:                                   # optional; command-line flags override these
+  fps: 24
+  resolution: [1280, 720]
+  ship_scale: 40
+
+anchors:                                # named moments, found in the run's events
+  kill:   {event: ship_destroyed, ship: red_majestics-003}
+  killer: {missile_that_killed: red_majestics-003}
+
+shots:
+  - name: launch
+    follow: killer.launcher
+    camera: {rig: orbit, distance: 2.6, azimuth: [108, 82], elevation: 10, relative_to: killer.heading}
+    start: killer.launch - 0.35
+    end: killer.launch + 1.1
+    duration: 2.5
+  - name: chase
+    follow: killer.missile
+    camera: {rig: chase, back: 8, lift: 1, swing: [-12, 12]}
+    start: killer.launch + 1
+    duration: 7.0
+    pacing: closing
+```
+
+**Anchors** name moments in the run, so shots do not hard-code times and the list still works after the scenario is
+changed and re-run. An anchor that finds nothing stops the render with a message. Every anchor has a time; some have
+more fields, used as `name.field`:
+
+| anchor | finds | fields |
+|---|---|---|
+| `{event: <type>, ship:, target:, which: first\|last}` | an event of that type, filtered by the ship it happened to (`ship`) or its `target` | `ship`, `target`, `missile` |
+| `{missile_that_killed: <ship>}` | the missile whose hit destroyed the ship; its time is the impact | `missile`, `launcher`, `target`, `launch`, `impact`, `heading` |
+| `{missile: <id>}` | a missile by id | the same |
+| `{time: <seconds>}` | a fixed moment | |
+
+**Shots** run in order, with hard cuts between them.
+
+| key | meaning |
+|---|---|
+| `follow` | the ship or missile at the centre of the scene: an id, or an anchor field |
+| `start`, `end` | simulated seconds: a number, an anchor, or an anchor plus or minus seconds (`kill - 0.45`) |
+| `duration` | seconds of film |
+| `speed` | simulated seconds per second of film |
+| `pacing` | `constant` (default): give three of start, end, duration and speed. `closing`: follows a missile from `start` for `duration`; its range to the target shrinks by the same factor every frame, so the cruise is compressed and the final approach runs in extreme slow motion. It ends at `end_range` (default 0.75) enlarged target hull lengths |
+| `camera` | `rig: orbit` or `rig: chase`, with the settings below |
+
+| camera | settings |
+|---|---|
+| `orbit` | `distance` in hull lengths (missile lengths when following a missile), `azimuth` and `elevation` in degrees. Azimuth is measured from the ship's nose, or from `relative_to` (a direction such as `killer.heading`): 0 looks back along it, 90 is side-on |
+| `chase` | behind a missile, looking at its target: `back` and `lift` in missile lengths, `swing` in degrees around the line of flight |
+
+A pair such as `azimuth: [108, 82]` or `swing: [-12, 12]` sweeps from the first value to the second over the shot.
+
+The code is in `shotlist.py` (reading and resolving a list) and `shot.py` (`build_sequence`). Each shot has its own
+scene origin, camera rig and frame-to-time mapping. Effect lifetimes (flashes, glow) are in seconds of film, so they
+look the same at any playback speed. A missile near the camera that moves little across the frame is drawn as a model
+with a drive glow; a fast one as a streak. The missiles of a salvo share one position in the simulation, so their
+models are spread into a loose ring around it (cosmetic); a followed missile stays on its true position.
 
 Output goes to `<run>/render/<name>/`: `shot.json`, `frames/00000.png ...`, `<name>.mp4` (if ffmpeg is installed) and
 `scene.blend` (the first frame, to open and look around by hand). Needs `blender` on the PATH (tested with 5.0).
 
 | option | meaning |
 |---|---|
+| `--shots` | a shot list file (the options below that set a window or camera apply to single shots only) |
 | `--target` | ship the camera follows |
 | `--t0`, `--t1` | window, in simulated seconds |
 | `--speed` | simulated seconds per second of film (default 15) |
@@ -63,6 +118,11 @@ crosses that gap in a fraction of a frame. So:
 - **A missile is a streak**: the segment it covers during one frame. At these speeds that is thousands of kilometres.
 - **Distant bodies** (beyond 2 million scene units) are drawn on a shell at that distance with the same apparent size.
 - **Light**: a sun lamp from the true direction of the star, plus a fill light near the camera so shadow sides are readable.
+- **Sky**: a fixed field of about 16,000 stars (a uniform scatter plus a denser band, always the same) beyond everything
+  else. The stars do not move with the scene, so when the background drifts the camera is turning; when it holds still
+  and a ship rotates, the ship is turning.
+- **Lens**: a soft bloom on everything bright, and streaks and ghost reflections (a lens flare) on the sun alone when
+  it is in view. Both are done in Blender's compositor (`lens_glare` in `blender_scene.py`).
 
 ## Ship models
 
@@ -92,9 +152,10 @@ cosmetic: the simulator tracks one hulk, and the pieces ride on its path.
 
 ## Known gaps
 
-- Two camera rigs (orbit, missile chase) and one preset sequence. No shot-list file, and no event-driven camera yet.
+- Two camera rigs (orbit, missile chase). Cuts are hard cuts; a shot list has no per-shot look settings (lighting, glow).
 - Objects are posed per frame in the render loop, not keyframed, so `scene.blend` holds a single frame.
-- No impeller wedge, no drive glow, no bloom. The kill fireball is a plain glowing ball and slow to render.
+- No impeller wedge and no drive glow on ships. The kill fireball is a plain glowing ball and slow to render.
+- The stars are an invented sky, not a real catalogue, and there is no setting to change or switch off the sky or the flare.
 - The missile model is a plain cylinder and its drive glow is a flat white ball. A salvo leaves from the centre of the hull.
 - Planet surfaces are a flat colour.
 
@@ -102,4 +163,5 @@ Wanted for the kill sequence (noted from review, not started):
 
 - Missiles should leave from the broadside tubes, not appear outside the hull.
 - Missile exhaust in the chase shot, so the missiles read as moving.
-- A slight camera orbit during the chase, to show motion.
+- A camera orbit during the chase: the `swing` setting exists and `scenarios/incursion02.shots.yaml` uses it, but
+  only three frames have been rendered with it.

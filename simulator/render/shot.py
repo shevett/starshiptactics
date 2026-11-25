@@ -56,14 +56,15 @@ def orbit_shot(run, ship, t0, t1, speed, fps, name="orbit", dist=4.0, azimuth_de
             "rig": {"type": "orbit", "dist": dist, "azimuth_deg": azimuth_deg, "elevation_deg": elevation_deg, "ref": ref}}
 
 
-def chase_shot(run, missile, t_start, film_s, fps, end_range_m, name="chase", back=8.0, lift=1.0):
-    """Ride behind a missile to its target. The range to the target shrinks by the same factor every frame, so the
-    target grows at a steady rate: the cruise is compressed and the last moments run in extreme slow motion.
-    back and lift place the camera, in missile lengths."""
+def closing_times(run, missile, t_start, film_s, fps, end_range_m):
+    """Frame times for a missile's approach in which the range to its target shrinks by the same factor every frame,
+    so the target grows at a steady rate: the cruise is compressed and the last moments run in extreme slow motion."""
     target = run.m_launch[missile][2]
     rng = lambda t: float(np.linalg.norm(run.missile_pos(missile, t) - run.state(target, t)["p"]))
     t_end = run.m_span[missile][1]
     r0, n, times = rng(t_start), max(2, int(round(film_s * fps))), []
+    if r0 <= end_range_m:
+        raise ValueError(f"{missile} is already within the end range of {target} at T+{t_start:.2f} s")
     for f in range(n):
         want = r0 * (end_range_m / r0) ** (f / (n - 1))
         lo, hi = (times[-1] if times else t_start), t_end
@@ -71,38 +72,7 @@ def chase_shot(run, missile, t_start, film_s, fps, end_range_m, name="chase", ba
             mid = 0.5 * (lo + hi)
             lo, hi = (mid, hi) if rng(mid) > want else (lo, mid)
         times.append(lo)
-    return {"name": name, "origin": ("missile", missile), "times": times,
-            "rig": {"type": "chase", "target": target, "back": back, "lift": lift}}
-
-
-def kill_sequence(run, target=None, fps=24, launch_s=2.5, chase_s=7.0, kill_s=2.0, kill_speed=3.0, ship_scale=40.0):
-    """Launch, chase, kill: the missile that destroyed `target` (default: the last ship destroyed), from the ship that
-    fired it, ridden to impact, then the target breaking up seen from outside."""
-    kills = [e for e in run.events if e["type"] == "ship_destroyed" and (target is None or e["actor_id"] == target)]
-    if not kills:
-        raise ValueError(f"no ship_destroyed event for {target or 'any ship'} in this run")
-    kill = kills[-1]
-    target = kill["actor_id"]
-    dets = [e for e in run.events if e["type"] == "detonation" and e["data"]["target_id"] == target and e["t"] <= kill["t"] + 1e-6
-            and e["actor_id"] in run.m_launch]
-    if not dets:
-        raise ValueError(f"no recorded missile hit on {target} before it was destroyed")
-    missile = dets[-1]["actor_id"]
-    # several warheads can go off in the same instant: follow the first of that group (the one that started the kill)
-    missile = next(e["actor_id"] for e in dets if abs(e["t"] - dets[-1]["t"]) < 1e-6)
-    tl, launcher, _ = run.m_launch[missile]
-    td = run.m_end[missile]
-    first = float(run.mt[run.m_first[missile]])
-    # launch: seen side-on to the direction the missile leaves in, in slow motion, until it is a few hull lengths out
-    away = run.missile_pos(missile, first) - run.state(launcher, first)["p"]
-    lead = 0.35 * (first - tl)
-    shots = [orbit_shot(run, launcher, tl - lead, first + 0.1 * (first - tl), (first - tl) * 1.45 / launch_s, fps, name="launch",
-                        dist=2.6, azimuth_deg=(108.0, 82.0), elevation_deg=10.0, ref=(away / np.linalg.norm(away)).tolist())]
-    hull = _class_dims(run)[run.info[target]["class"]]["length"] * ship_scale
-    shots.append(chase_shot(run, missile, first, chase_s, fps, end_range_m=0.75 * hull))
-    shots.append(orbit_shot(run, target, td - 0.15 * kill_speed, td + (kill_s - 0.15) * kill_speed, kill_speed, fps, name="kill",
-                            dist=2.4, azimuth_deg=(50.0, 75.0)))
-    return {"target": target, "missile": missile, "launcher": launcher, "launch_t": tl, "impact_t": td, "shots": shots}
+    return times
 
 
 _DIMS = {}
@@ -133,9 +103,10 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
                    unit_m=1000.0, resolution=(1280, 720), lens_mm=35.0, flash_s=0.4, kill_flash_s=0.6, debris_cool_s=5.0,
                    n_sparks=80, debris_speed=1.0, debris_spin=1.0, engine="eevee", hero=None):
     """Write <out_dir>/shot.json for a list of shot specs (see orbit_shot, chase_shot) and return the shot dict.
-    flash_s, kill_flash_s and debris_cool_s are in seconds of film. hero: a missile drawn without the cosmetic
-    spread that separates the missiles of a salvo."""
+    flash_s, kill_flash_s and debris_cool_s are in seconds of film. hero: a missile (or several) drawn without the
+    cosmetic spread that separates the missiles of a salvo."""
     run = run if isinstance(run, Run) else Run(run)
+    heroes = set() if hero is None else {hero} if isinstance(hero, str) else set(hero)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     dims = _class_dims(run, repo)
@@ -193,7 +164,7 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
     # covers during the frame. The missiles of a salvo share one position in the simulation, so the models are spread
     # into a loose ring (cosmetic) around the true position; the hero missile stays on it.
     def spread(mid, along):
-        if mid == hero:
+        if mid in heroes:
             return np.zeros(3)
         h = sum(ord(c) * (i + 1) for i, c in enumerate(mid))
         side = np.cross(along, [0.0, 0.0, 1.0])
@@ -280,15 +251,26 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
         sp = shots[fr["shot"]]
         rig, k, m = sp["rig"], fr["k"], len(sp["times"])
         if rig["type"] == "orbit":
-            ref = np.array(rig["ref"]) if rig.get("ref") is not None else _nose(run.state(sp["origin"][1], sp["times"][0])["q"])
+            kind, oid = sp["origin"]
+            if rig.get("ref") is not None:
+                ref = np.array(rig["ref"])
+            elif kind == "ship":
+                ref = _nose(run.state(oid, sp["times"][0])["q"])
+            else:                                         # a missile: measured from the direction of its target
+                ref = run.state(run.m_launch[oid][2], sp["times"][0])["p"] - run.missile_pos(oid, sp["times"][0])
             az0, az1 = rig["azimuth_deg"]
             az = math.atan2(ref[1], ref[0]) + math.radians(az0 + (az1 - az0) * k / max(m - 1, 1))
-            el, d = math.radians(rig["elevation_deg"]), rig["dist"] * hull_len(sp["origin"][1])
+            el, d = math.radians(rig["elevation_deg"]), rig["dist"] * (hull_len(oid) if kind == "ship" else mlen)
             cams.append({"loc": [d * math.cos(el) * math.cos(az), d * math.cos(el) * math.sin(az), d * math.sin(el)], "look": [0.0, 0.0, 0.0]})
         else:                                             # chase: behind and a little above the missile, looking at its target
             to = (run.state(rig["target"], fr["t"])["p"] - fr["o"]) / unit_m
             ahead = to / max(np.linalg.norm(to), 1e-9)
-            loc = -ahead * rig["back"] * mlen + np.array([0.0, 0.0, rig["lift"] * mlen])
+            side = np.cross(ahead, [0.0, 0.0, 1.0])
+            side = side / max(np.linalg.norm(side), 1e-9)
+            up = np.cross(side, ahead)
+            a0, a1 = rig.get("swing_deg", (0.0, 0.0))     # the camera swings around the line of flight during the shot
+            a = math.radians(a0 + (a1 - a0) * k / max(m - 1, 1))
+            loc = -ahead * rig["back"] * mlen + (math.cos(a) * up + math.sin(a) * side) * rig["lift"] * mlen
             cams.append({"loc": loc.tolist(), "look": to.tolist()})        # the target stays centred; the missile sits below it
 
     v, f_, uv = hulls.lathe([[0.0, 0.55], [0.08, 0.7], [0.12, 1.0], [0.8, 1.0], [0.93, 0.6], [1.0, 0.0]], missile_length_m, missile_length_m * 0.14,
