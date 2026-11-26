@@ -58,6 +58,8 @@ class Group:
     orbit: dict | None = None      # initial circular orbit around a body (instead of position/velocity)
     engagement: dict | None = None # rules of engagement (weapons); None = hold fire
     mission: dict | None = None    # reaction rules layered over the objective; None = objective only
+    arrival: dict | None = None    # {type: hyper_translation, time_s, delays}: the group drops out of hyperspace at its start state
+    slot_offsets: list | None = None   # per ship: an extra offset (m) from its formation slot
 
 
 @dataclass
@@ -610,6 +612,14 @@ def load_config(scenario_path, root=None):
             if ftype not in FORMATIONS:
                 raise ValueError(f"{w}.formation.type: {ftype!r} not in {sorted(FORMATIONS)}")
             spacing = float(form.get("spacing_km", 0)) * KM
+            slot_offsets = None
+            if form.get("offsets_km") is not None:          # per ship, added to its slot: breaks up a too-regular formation
+                oo = form["offsets_km"]
+                if orbit:
+                    raise ValueError(f"{w}.formation.offsets_km: not available for a group that starts in orbit")
+                if not isinstance(oo, list) or len(oo) != count or any(not isinstance(o, (list, tuple)) or len(o) != 3 for o in oo):
+                    raise ValueError(f"{w}.formation.offsets_km: need one [x, y, z] per ship ({count})")
+                slot_offsets = [tuple(float(c) * KM for c in o) for o in oo]
             if "mission" in u and "objective" in (u["mission"] or {}) and "objective" in u:
                 raise ValueError(f"{w}: give the objective either at group level or inside mission:, not both")
             obj = dict(((u.get("mission") or {}).get("objective")) or u.get("objective") or {"type": "coast"})
@@ -636,8 +646,27 @@ def load_config(scenario_path, root=None):
             if "engagement" in u and u.get("class") in cfg.ship_classes:
                 engagement = _parse_engagement(u["engagement"] or {}, cfg.ship_classes[u["class"]], missiles, w + ".engagement", doctrine)
             mission = _parse_mission(u["mission"], doctrine, w + ".mission", obj) if u.get("mission") else None
+            arrival = None
+            if u.get("arrival") is not None:
+                a = u["arrival"]
+                if not isinstance(a, dict) or set(a) - {"type", "time_s", "stagger_s"} or a.get("type") != "hyper_translation":
+                    raise ValueError(f"{w}.arrival: expected {{type: hyper_translation, time_s: <seconds>, stagger_s: <seconds or a list>}}")
+                if orbit:
+                    raise ValueError(f"{w}.arrival: a group that starts in orbit cannot arrive from hyperspace; give position and velocity")
+                at = float(a.get("time_s", 0.0))
+                if at < 0 or at >= float(sc.get("duration_s", math.inf)):
+                    raise ValueError(f"{w}.arrival.time_s: must be within the scenario (0 to duration_s)")
+                st = a.get("stagger_s", 0.0)                # one number: each ship that much after the one before; a list: per ship
+                delays = [float(x) for x in st] if isinstance(st, list) else [k * float(st) for k in range(count)]
+                if len(delays) != count or min(delays) < 0 or at + max(delays) >= float(sc.get("duration_s", math.inf)):
+                    raise ValueError(f"{w}.arrival.stagger_s: need a delay >= 0, or one per ship ({count}), within the scenario")
+                arrival = {"type": "hyper_translation", "time_s": at, "delays": delays}
+                # the primary star is the origin of the system frame
+                if cfg.hyper_limit_m is not None and math.sqrt(sum(c * c for c in pos)) < cfg.hyper_limit_m:
+                    warnings.append(f"{w}.arrival: the arrival point is {math.sqrt(sum(c * c for c in pos)) / 1e9:.0f} million km from the star, "
+                                    f"inside the hyper limit ({cfg.hyper_limit_m / 1e9:.0f} million km)")
             cfg.groups.append(Group(gid, u.get("faction"), u.get("class"), count, pos, vel, fwd, ftype, spacing, obj, orbit,
-                                    engagement, mission))
+                                    engagement, mission, arrival, slot_offsets))
         except ValueError as exc:
             problems.append(str(exc))
 

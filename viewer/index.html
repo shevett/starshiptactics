@@ -217,7 +217,7 @@ function init(meta, rows, events, missileRows) {
     if (s.orientation_xyzw) o.q.set(s.orientation_xyzw, 4 * k);
     if (s.integrity !== undefined) o.integ[k] = s.integrity;
     if (s.destroyed) o.dead[k] = 1;
-    if (s.departed) o.gone[k] = 1;
+    if (s.departed) o.gone[k] = s.pending ? 2 : 1;      // 2: not yet arrived from hyperspace
   }));
   const t = Float64Array.from(rows.map(r => r.t));
   const tracks = rows.map(r => r.tracks || null);
@@ -266,7 +266,7 @@ function stateAtRaw(o, t) {
     const n = Math.hypot(...q) || 1; const [x, y, z, w] = q.map(c => c / n);
     fwd = [1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)];
   }
-  return { p, v, a, fwd, integ: o.integ ? o.integ[k] : 1, dead: !!(o.dead && o.dead[k]), gone: !!(o.gone && o.gone[k]) };
+  return { p, v, a, fwd, integ: o.integ ? o.integ[k] : 1, dead: !!(o.dead && o.dead[k]), gone: !!(o.gone && o.gone[k]), pending: !!(o.gone && o.gone[k] === 2) };
 }
 
 // ---------------------------------------------------------------- UI setup
@@ -593,7 +593,7 @@ function draw() {
     if ($("oLabels").checked) {
       const g = s.meta.group; ctx.fillStyle = col;
       const spread = V.scale < 2e4;    // when zoomed in show each ship; otherwise one label per group
-      const dmg = st.dead ? " ✕ destroyed" : st.gone ? " (departed)" : st.integ < 0.9995 ? ` ▮${st.integ.toFixed(2)}` : "";
+      const dmg = st.dead ? " ✕ destroyed" : st.pending ? " (in hyper)" : st.gone ? " (departed)" : st.integ < 0.9995 ? ` ▮${st.integ.toFixed(2)}` : "";
       if (spread) ctx.fillText(s.id.replace(/^.*_group-/, g + " #") + dmg, sx + 10, sy + 4);
       else if (!groupDrawn[g]) { groupDrawn[g] = 1; ctx.fillText(`${g} ×${D.groups[g].length}`, sx + 10, sy - 8); }
     }
@@ -756,8 +756,8 @@ function updateFleet() {
     const pct = Math.max(0, Math.min(1, st.integ));
     w.bar.style.width = (pct * 100).toFixed(1) + "%"; w.bar.style.opacity = st.dead || st.gone ? .6 : 1;
     w.bar.style.background = st.dead ? HULK : factionColor(f);
-    w.val.textContent = st.dead ? "dead" : st.gone ? "gone" : pct.toFixed(2);
-    if (st.gone) w.kin.textContent = "departed via hyper limit";
+    w.val.textContent = st.dead ? "dead" : st.pending ? "due" : st.gone ? "gone" : pct.toFixed(2);
+    if (st.gone) w.kin.textContent = st.pending ? "in hyperspace, not yet arrived" : "departed via hyper limit";
     else {                                   // fixed-width fields in a monospace row, so the digits never shift
       const g = Math.hypot(...st.a) / 9.80665, sp = Math.hypot(...st.v) / 1e3;
       const brg = (Math.atan2(st.v[1], st.v[0]) * 180 / Math.PI + 360) % 360;
@@ -766,7 +766,7 @@ function updateFleet() {
       w.kin.textContent = `a:${f(g, 1, 5)}g · v:${f(sp, 3, 10)}km/s · h:${String(Math.round(brg) % 360).padStart(3, "0")}° ${(el < 0 ? "-" : "+") + String(Math.round(Math.abs(el))).padStart(2, "0")}°`;
     }
     w.r.className = "ship" + (st.dead ? " dead" : st.gone ? " gone" : "") + (V.selected === s.id ? " sel" : "");
-    w.r.title = `${s.id} · ${s.meta.class} · integrity ${st.integ.toFixed(3)}${st.gone ? " · departed via hyper limit" : ""}`;
+    w.r.title = `${s.id} · ${s.meta.class} · integrity ${st.integ.toFixed(3)}${st.pending ? " · not yet arrived" : st.gone ? " · departed via hyper limit" : ""}`;
   }
   for (const f in fleetHead) fleetHead[f].textContent = `${alive[f] || 0} / ${total[f]} active`;
 }

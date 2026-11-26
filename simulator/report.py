@@ -232,6 +232,10 @@ def build(run_dir):
             seen_contact.add(e["data"]["faction"])
             moments.append({"t": e["t"], "label": f"{e['data']['faction']} gains first contact "
                             f"({e['data']['range_m'] / 1e9:.1f} Mkm)", "kind": "contact"})
+        elif e["type"] == "hyper_arrival":
+            if (e["t"], e["data"].get("group")) not in seen_contact:                 # one line for a group arriving together
+                seen_contact.add((e["t"], e["data"].get("group")))
+                moments.append({"t": e["t"], "label": f"{e['data'].get('group') or e['actor_id']} arrives from hyperspace", "kind": "depart"})
         elif e["type"] == "hyper_departure":
             moments.append({"t": e["t"], "label": f"{e['actor_id']} departs via the hyper limit", "kind": "depart"})
         elif e["type"] == "mission_changed":

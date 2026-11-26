@@ -103,7 +103,18 @@ engagement:
 - A *departing* ship that reaches `cfg.hyper_limit_m` from the primary star emits `hyper_departure` (and
   `objective_complete`), is frozen in place, flagged `departed` in snapshots, ignored by sensors, fire control and
   missile impact tests (`SensorNet.departed` and the swarm's alive mask). Missiles already chasing it coast on.
-- Not implemented: arrival at the limit.
+- Arrival: a group with `arrival: {type: hyper_translation, time_s: <seconds>}` (default 0) drops out of hyperspace at
+  its given position and velocity at that time. Until then its ships are off the field exactly like departed ships
+  (held at the arrival state, not sensed, targeted or counted; flagged `departed` and `pending` in snapshots), and the
+  scenario does not end on `all_objectives_complete` while any are still due. Each ship emits `hyper_arrival` (group,
+  position, velocity, distance from the star, hyper limit). The arrival point is not required to be at the hyper
+  limit; one inside it gives a warning. A group that starts in orbit cannot have an arrival.
+  `stagger_s` spreads a group's arrivals: one number puts each ship that long after the one before, a list gives each
+  ship its own delay after `time_s` (`stagger_s: [0, 2, 1]`). A later ship appears in its formation slot beside the
+  earlier ones, not behind them. A ship appears on the first time step at or after its time, so with a 1 s step delays
+  are whole seconds.
+- `formation.offsets_km`: one `[x, y, z]` per ship, added to its formation slot (system axes), for example to lift one
+  ship out of the plane. The group keeps these offsets while it holds formation.
 - Leaving via a rule is the `withdraw` action (docs/MISSIONS.md); it reuses this mechanic.
 
 ## Withdrawal, strength and orbit objectives

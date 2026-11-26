@@ -44,9 +44,12 @@ class Run:
         self.pos, self.vel = np.zeros((m, n, 3)), np.zeros((m, n, 3))
         self.quat = np.tile([0.0, 0.0, 0.0, 1.0], (m, n, 1))                 # xyzw, as written by the simulator
         self.dead, self.gone = np.zeros((m, n), bool), np.zeros((m, n), bool)
+        self.acc = np.zeros((m, n))                                          # magnitude of acceleration, m/s^2
         for k, r in enumerate(rows):
             for i, o in enumerate(r["objects"]):
                 self.pos[i, k], self.vel[i, k] = o["position_m"], o["velocity_m_s"]
+                if "acceleration_m_s2" in o:
+                    self.acc[i, k] = float(np.linalg.norm(o["acceleration_m_s2"]))
                 if "orientation_xyzw" in o:
                     self.quat[i, k] = o["orientation_xyzw"]
                 self.dead[i, k], self.gone[i, k] = bool(o.get("destroyed")), bool(o.get("departed"))
@@ -70,6 +73,9 @@ class Run:
                 self.m_first.setdefault(mid, k)
                 self.m_last[mid] = k
                 self.m_faction[mid] = rec.get("faction")
+        # ships that arrive from hyperspace: (time, position, velocity) at the moment they appear
+        self.arrive = {e["actor_id"]: (e["t"], np.array(e["data"]["position_m"]), np.array(e["data"]["velocity_m_s"]))
+                       for e in self.events if e["type"] == "hyper_arrival"}
         self.m_span = {m: (self.m_launch[m][0] if m in self.m_launch else self.mt[k],
                            min(self.m_end.get(m, np.inf), self.mt[self.m_last[m]] + self.m_interval))
                        for m, k in self.m_first.items()}
@@ -81,14 +87,32 @@ class Run:
         return k, k2, h, ((t - self.t[k]) / h if h > 0 else 0.0)
 
     def state(self, obj_id, t):
-        """dict(p, v, q (xyzw), dead, gone) for a ship or body at time t."""
+        """dict(p, v, q (xyzw), dead, gone) for a ship or body at time t. Before the run starts everything coasts
+        (straight-line, backwards). A ship arriving from hyperspace is `gone` before its arrival, and its position
+        then is where it would have been, coasting in: the place its arrival effect is drawn."""
         i = self.index[obj_id]
         k, k2, h, s = self._bracket(t)
         s = float(np.clip(s, 0.0, 1.0))
+        arr = self.arrive.get(obj_id)
+        if arr is not None and t < arr[0] or t < self.t[0]:
+            ta, pa, va = arr if arr is not None and t < arr[0] else (self.t[0], self.pos[i, 0], self.vel[i, 0])
+            ka = self._bracket(ta)[0]
+            return {"p": pa + va * (t - ta), "v": va, "q": self.quat[i, ka], "dead": False, "gone": arr is not None and t < arr[0]}
+        if arr is not None and self.t[k] < arr[0]:           # the stored sample before this one is the held arrival state
+            h = self.t[k2] - arr[0]
+            p = hermite((t - arr[0]) / h, h, arr[1], arr[2], self.pos[i, k2], self.vel[i, k2])
+            return {"p": p, "v": self.vel[i, k2], "q": slerp(self.quat[i, k], self.quat[i, k2], (t - arr[0]) / h), "dead": False, "gone": False}
         p = hermite(s, h, self.pos[i, k], self.vel[i, k], self.pos[i, k2], self.vel[i, k2])
         v = self.vel[i, k] * (1 - s) + self.vel[i, k2] * s
         return {"p": p, "v": v, "q": slerp(self.quat[i, k], self.quat[i, k2], s),
                 "dead": bool(self.dead[i, k]), "gone": bool(self.gone[i, k])}
+
+    def drive(self, obj_id, t):
+        """How hard a ship is accelerating at t, as a fraction (0..1) of the hardest it accelerates in the run."""
+        i = self.index[obj_id]
+        top = float(self.acc[i].max())
+        k, k2, _, s = self._bracket(max(t, self.t[0]))
+        return 0.0 if top <= 0 else float((self.acc[i, k] * (1 - s) + self.acc[i, k2] * s) / top)
 
     def missiles_alive(self, t):
         """ids of missiles in flight at time t (from launch to detonation, or to the end of their stored records)."""

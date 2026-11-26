@@ -27,7 +27,12 @@ units:
     velocity_km_s: {x: -1200, y: 0, z: 0}
     orientation:
       forward_vector: [1, 0, 0]
-    formation: {type: line_abreast, spacing_km: 200}
+    formation:
+      type: line_abreast
+      spacing_km: 400
+      offsets_km: [[0, 0, 0], [0, 0, 100], [0, 0, 0]]     # per ship, added to its slot: the middle ship rides 100 km high
+    # drops out of hyperspace here as the scenario opens; stagger_s: seconds after the first ship, per ship
+    arrival: {type: hyper_translation, time_s: 0, stagger_s: [0, 2, 1]}
     mission:
       profile: aggressive_transit
       objective: {type: transit_to_orbit, body: earth, altitude_km: 30000}

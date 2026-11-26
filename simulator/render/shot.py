@@ -24,6 +24,7 @@ from . import hulls
 from .interp import Run
 
 FAR = 2.0e6               # scene units; anything farther is projected onto a shell at this distance
+EASE = {"linear": lambda u: u, "in": lambda u: u * u, "out": lambda u: 1.0 - (1.0 - u) ** 2, "in_out": lambda u: u * u * (3.0 - 2.0 * u)}
 FACTION_RGB = {"red": [1.0, 0.25, 0.2], "blue": [0.3, 0.55, 1.0]}
 
 
@@ -101,7 +102,8 @@ def build(run_dir, out_dir, repo, target=None, t0=None, t1=None, speed=15.0, fps
 
 def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40.0, missile_scale=150.0, missile_length_m=15.0,
                    unit_m=1000.0, resolution=(1280, 720), lens_mm=35.0, flash_s=0.4, kill_flash_s=0.6, debris_cool_s=5.0,
-                   n_sparks=80, debris_speed=1.0, debris_spin=1.0, engine="eevee", hero=None):
+                   n_sparks=80, debris_speed=1.0, debris_spin=1.0, engine="eevee", hero=None,
+                   arrival_build_s=2.0, arrival_emerge_s=0.8, arrival_sail_s=3.5, wedge=True):
     """Write <out_dir>/shot.json for a list of shot specs (see orbit_shot, chase_shot) and return the shot dict.
     flash_s, kill_flash_s and debris_cool_s are in seconds of film. hero: a missile (or several) drawn without the
     cosmetic spread that separates the missiles of a salvo."""
@@ -145,6 +147,24 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
                       # since the kill: simulated seconds (drives the drift of the pieces) and film seconds (drives the glow)
                       "kill_age": None if tk is None else [fr["t"] - tk for fr in F],
                       "kill_film": None if tk is None else [film_age(fr["shot"], fr["t"], tk) for fr in F]})
+        # arrival from hyperspace: film seconds since the ship appeared (negative before), if any frame is near that moment
+        if s in run.arrive:
+            age = [film_age(fr["shot"], fr["t"], run.arrive[s][0]) for fr in F]
+            if any(-arrival_build_s <= a <= arrival_emerge_s + arrival_sail_s for a in age):
+                ships[-1]["arrive_film"] = age
+        # impeller wedge: per frame, its brightness and how far its pattern has flowed. Up on every live ship; after an
+        # arrival it comes up as the sails thin out. The pattern flows faster the harder the ship accelerates.
+        if wedge:
+            w, flow = [], 0.0
+            for k, (a, fr) in enumerate(zip(st, F)):
+                push = run.drive(s, fr["t"])
+                up = 0.0 if a["dead"] or a["gone"] else 1.0
+                if s in run.arrive:
+                    since = film_age(fr["shot"], fr["t"], run.arrive[s][0]) - arrival_emerge_s
+                    up *= float(np.clip((since - 0.6 * arrival_sail_s) / (0.4 * arrival_sail_s + 0.5), 0.0, 1.0))
+                flow += (0.2 + 1.0 * push) / fps
+                w.append([round(up * (0.55 + 0.45 * push), 4), round(flow, 4)])
+            ships[-1]["wedge"] = w
 
     bodies, sun_dir = [], None
     for b in run.bodies:
@@ -250,7 +270,7 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
     for fr in F:
         sp = shots[fr["shot"]]
         rig, k, m = sp["rig"], fr["k"], len(sp["times"])
-        if rig["type"] == "orbit":
+        if rig["type"] in ("orbit", "release"):
             kind, oid = sp["origin"]
             if rig.get("ref") is not None:
                 ref = np.array(rig["ref"])
@@ -259,9 +279,24 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
             else:                                         # a missile: measured from the direction of its target
                 ref = run.state(run.m_launch[oid][2], sp["times"][0])["p"] - run.missile_pos(oid, sp["times"][0])
             az0, az1 = rig["azimuth_deg"]
-            az = math.atan2(ref[1], ref[0]) + math.radians(az0 + (az1 - az0) * k / max(m - 1, 1))
-            el, d = math.radians(rig["elevation_deg"]), rig["dist"] * (hull_len(oid) if kind == "ship" else mlen)
-            cams.append({"loc": [d * math.cos(el) * math.cos(az), d * math.cos(el) * math.sin(az), d * math.sin(el)], "look": [0.0, 0.0, 0.0]})
+            el0, el1 = rig["elevation_deg"] if isinstance(rig["elevation_deg"], (list, tuple)) else (rig["elevation_deg"],) * 2
+            u = EASE[rig.get("ease", "linear")](k / max(m - 1, 1))
+            az = math.atan2(ref[1], ref[0]) + math.radians(az0 + (az1 - az0) * u)
+            el, d = math.radians(el0 + (el1 - el0) * u), rig["dist"] * (hull_len(oid) if kind == "ship" else mlen)
+            rel = np.array([d * math.cos(el) * math.cos(az), d * math.cos(el) * math.sin(az), d * math.sin(el)])
+            if rig["type"] == "orbit":
+                cams.append({"loc": rel.tolist(), "look": [0.0, 0.0, 0.0]})
+            else:
+                # release: the camera starts beside the subject, moving with it, then eases to rest (in the system's frame)
+                # over `settle` seconds of film and watches the subject go. Its own position is carried from frame to frame.
+                if k == 0:
+                    free = fr["o"] + rel * unit_m
+                else:
+                    t_prev = sp["times"][k - 1]
+                    v = (fr["o"] - opos(kind, oid, t_prev)) / max(fr["t"] - t_prev, 1e-9)        # the subject's velocity
+                    x = min(1.0, (k - 0.5) / fps / max(rig["settle_s"], 1e-9))
+                    free = free + v * (1.0 - x * x * (3.0 - 2.0 * x)) * (fr["t"] - t_prev)
+                cams.append({"loc": ((free - fr["o"]) / unit_m).tolist(), "look": [0.0, 0.0, 0.0]})
         else:                                             # chase: behind and a little above the missile, looking at its target
             to = (run.state(rig["target"], fr["t"])["p"] - fr["o"]) / unit_m
             ahead = to / max(np.linalg.norm(to), 1e-9)
@@ -273,15 +308,18 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
             loc = -ahead * rig["back"] * mlen + (math.cos(a) * up + math.sin(a) * side) * rig["lift"] * mlen
             cams.append({"loc": loc.tolist(), "look": to.tolist()})        # the target stays centred; the missile sits below it
 
+    for c, fr in zip(cams, F):
+        c["lens"] = float(shots[fr["shot"]]["rig"].get("lens_mm") or lens_mm)
     v, f_, uv = hulls.lathe([[0.0, 0.55], [0.08, 0.7], [0.12, 1.0], [0.8, 1.0], [0.93, 0.6], [1.0, 0.0]], missile_length_m, missile_length_m * 0.14,
                             missile_length_m * 0.14, segments=12)
     shot = {"scenario": run.meta.get("scenario_id"), "target": target, "fps": fps, "frames": n, "times": times,
             "shots": [{"name": sp["name"], "origin": list(sp["origin"]), "frames": len(sp["times"]), "t0": sp["times"][0], "t1": sp["times"][-1]} for sp in shots],
             "shot_of": [fr["shot"] for fr in F], "unit_m": unit_m, "ship_scale": ship_scale, "mesh_scale": scale,
             "missile_mesh": {"verts": v, "faces": f_, "scale": missile_scale / unit_m, "length": mlen},
-            "resolution": list(resolution), "lens_mm": lens_mm, "engine": engine, "far": FAR,
+            "resolution": list(resolution), "lens_mm": lens_mm, "lens_max": max(c["lens"] for c in cams), "engine": engine, "far": FAR,
             "faction_rgb": FACTION_RGB, "debris_speed": debris_speed, "debris_spin": debris_spin, "debris_cool_s": debris_cool_s,
-            "sparks": sparks, "meshes": meshes, "ships": ships, "bodies": bodies, "sun_dir": sun_dir,
+            "arrival": {"build_s": arrival_build_s, "emerge_s": arrival_emerge_s, "sail_s": arrival_sail_s},
+            "dims": dims, "sparks": sparks, "meshes": meshes, "ships": ships, "bodies": bodies, "sun_dir": sun_dir,
             "streaks": streaks, "models": models, "flashes": flashes, "camera": cams, "out_dir": str(out_dir.resolve())}
     (out_dir / "shot.json").write_text(json.dumps(shot))
     return shot

@@ -52,6 +52,7 @@ class Simulation:
     def _build_ships(self):
         cfg = self.cfg
         ids, fac, cls, grp, objs, offs, eng, bats = [], [], [], [], [], [], [], []
+        arrive = []
         P, V, Q = [], [], []
         bp0, bv0 = self.eph.at(0.0)
         min_sep = cfg.nav["navigation"]["ship_separation"]["minimum_km"] * 1000.0
@@ -73,6 +74,8 @@ class Simulation:
                 lateral = normalize(lateral)
                 offs_g = [lateral * ((k - (g.count - 1) / 2.0) * g.spacing_m if g.formation == "line_abreast" else 0.0)
                           for k in range(g.count)]
+                if g.slot_offsets:
+                    offs_g = [o + np.array(x) for o, x in zip(offs_g, g.slot_offsets)]
                 slot_pos = [np.array(g.position, float) + o for o in offs_g]
                 slot_vel = [v.copy()] * g.count
                 fwd_g = [f] * g.count
@@ -87,6 +90,7 @@ class Simulation:
                              for b in ((cfg.ship_classes[g.class_id].raw.get("weapons") or {}).get("missile_batteries") or [])]
                             if g.engagement and g.engagement["mode"] == "fire_at_will" else [])
                 offs.append(offs_g[k])
+                arrive.append((g.arrival["time_s"] + g.arrival["delays"][k], g.arrival["delays"][k]) if g.arrival else (np.nan, 0.0))
                 P.append(slot_pos[k]); V.append(np.array(slot_vel[k], float)); Q.append(quat_between(FORWARD, fwd_g[k]))
         self.ids, self.fac, self.cls, self.grp, self.objs = ids, fac, cls, grp, objs
         self.engage, self.batteries = eng, bats
@@ -117,6 +121,10 @@ class Simulation:
         self.departed = np.zeros(len(ids), bool)      # left the field through the hyper limit (frozen, untargetable)
         self.destroyed = np.zeros(len(ids), bool)     # structurally dead: a drifting hulk (no thrust, steering or fire)
         self.departing = np.zeros(len(ids), bool)     # currently trying to leave; crossing the limit then removes the ship
+        # ships arriving from hyperspace: off the field (held at their arrival state, like a departed ship) until arrive_t
+        self.arrive_t, self.arrive_delay = np.array(arrive, float).reshape(-1, 2).T.copy()
+        self.pending = ~np.isnan(self.arrive_t)
+        self.departed[self.pending] = True
         self.star = next((k for k, b in enumerate(self.cfg.bodies) if b.type == "star" and b.parent is None), None)
         self.anchors = {}
         self.avoid_reason = [None] * len(ids)
@@ -239,6 +247,19 @@ class Simulation:
             if g == group:
                 self.departing[i] = False                  # an abandoned withdrawal must not still count as a departure
         self.anchors = {k: v for k, v in self.anchors.items() if k[0] != group}
+
+    def _check_arrivals(self, t, star_pos):
+        """A ship whose arrival time has come drops out of hyperspace at its start state (event hyper_arrival)."""
+        for i in np.nonzero(self.pending & (self.arrive_t <= t + 1e-9))[0]:
+            self.pending[i] = False
+            self.departed[i] = False
+            self.P[i] = self.P[i] + self.V[i] * self.arrive_delay[i]      # a later ship appears in its slot beside the earlier ones
+            data = {"group": self.grp[i], "position_m": _r(self.P[i], 1), "velocity_m_s": _r(self.V[i], 3)}
+            if star_pos is not None:
+                data["distance_from_star_m"] = round(float(np.linalg.norm(self.P[i] - star_pos)), 1)
+            if self.cfg.hyper_limit_m is not None:
+                data["hyper_limit_m"] = round(self.cfg.hyper_limit_m, 1)
+            self.emit(t, "hyper_arrival", self.ids[i], data)
 
     def _check_departures(self, t, star_pos):
         """A departing ship that has reached the hyper limit leaves the field (event hyper_departure)."""
@@ -401,6 +422,8 @@ class Simulation:
                 t = step * dt
                 t_end = t
                 bp, bv = next_bodies if next_bodies is not None else self.eph.at(t)
+                if self.pending.any():
+                    self._check_arrivals(t, None if self.star is None else bp[self.star])
                 hist.record(step, self.P, self.V)
                 if nships and (step % obs_every == 0 or len(self.swarm)):     # missiles need fresh tracks every step
                     self.sensors.update(t, self.P, emit_events=(step % obs_every == 0))
@@ -410,7 +433,7 @@ class Simulation:
                                                                   "transit_to_hyper_limit")]
                     busy = {g for g, b in self.mission.behavior.items()} if self.mission else set()    # engaging / withdrawing
                     settled = all(o["complete"] and self.grp[i] not in busy for i, o in enumerate(self.objs) if o in active)
-                    terminate = terminate or (bool(active) and settled)
+                    terminate = terminate or (bool(active) and settled and not self.pending.any())      # not while ships are still due
                 if step % snap_every == 0 or terminate:
                     state_f.write(json.dumps(self._snapshot(t, bp, bv), separators=(",", ":")) + "\n")
                 if terminate:
@@ -493,6 +516,7 @@ class Simulation:
                          "velocity_m_s": _r(self.V[i], 6), "acceleration_m_s2": _r(self.A[i], 6),
                          "orientation_xyzw": _r(self.Q[i], 9), "integrity": round(float(self.integrity[i]), 6),
                          **({"departed": True} if self.departed[i] else {}),
+                         **({"pending": True} if self.pending[i] else {}),
                          **({"destroyed": True} if self.destroyed[i] else {})})
         row = {"t": round(t, 6), "objects": objs}
         tracks = {}

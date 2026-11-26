@@ -121,7 +121,8 @@ behaviour is active. The report (`python3 -m simulator report <run>`) lists cont
 - The escape plan ignores gravity, assumes hostiles never change course or accelerate, and treats the group as one point.
   Planets and the Sun are obstacles: a heading through a body's exclusion zone (x `escape.body_margin`) is never chosen. Hostile classes without a missile envelope count as
   harmless (e.g. a class whose launchers are not yet in the database).
-- `withdraw` can only go to the hyper limit. Departure is a one-way removal; there is no arrival yet.
+- `withdraw` can only go to the hyper limit. Departure is a one-way removal: a ship that has left cannot come back. (A group can
+  *start* by arriving from hyperspace: `arrival:` on the group, see docs/M1_NOTES.md.)
 - Hostile strength is tonnage only. Missile defence, wedge geometry and so on do not enter it, and a hostile's own
   magazine is not considered.
 - Target choice is "nearest matching contact"; a threat score is a later doctrine item.

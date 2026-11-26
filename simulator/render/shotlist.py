@@ -16,9 +16,10 @@ from . import shot as shot_mod
 
 BUILTIN = Path(__file__).resolve().parent / "sequences"
 
-FILM_KEYS = {"fps", "resolution", "ship_scale", "engine"}
+FILM_KEYS = {"fps", "resolution", "ship_scale", "engine", "watermark"}
 SHOT_KEYS = {"name", "follow", "camera", "start", "end", "duration", "speed", "pacing", "end_range"}
-RIG_KEYS = {"orbit": {"distance", "azimuth", "elevation", "relative_to"}, "chase": {"back", "lift", "swing"}}
+ORBIT_KEYS = {"distance", "azimuth", "elevation", "relative_to", "ease", "lens"}
+RIG_KEYS = {"orbit": ORBIT_KEYS, "release": ORBIT_KEYS | {"settle"}, "chase": {"back", "lift", "swing", "lens"}}
 ANCHOR_KINDS = ("event", "missile_that_killed", "missile", "time")
 
 _EXPR = re.compile(r"^\s*(\$?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?|\d+(?:\.\d*)?)\s*(?:([+-])\s*(\d+(?:\.\d*)?))?\s*$")
@@ -170,6 +171,7 @@ def film_settings(spec, **overrides):
     """Film settings: explicit overrides (the command line) win over the list's film section, then the defaults."""
     film = {"fps": 24, "resolution": [1280, 720], "ship_scale": 40.0, "engine": "eevee", **(spec.get("film") or {})}
     film.update({k: v for k, v in overrides.items() if v is not None})
+    film["watermark"] = str(film.get("watermark") or "").strip() or None      # empty or missing: no watermark
     return film
 
 
@@ -205,6 +207,13 @@ def plan(run, spec, repo, variables=None, fps=24, ship_scale=40.0):
             target = run.m_launch[obj][2]
             hull = dims[run.info[target]["class"]]["length"] * ship_scale
             times = shot_mod.closing_times(run, obj, start, float(duration), fps, float(s.get("end_range", 0.75)) * hull)
+        elif pacing == "constant" and isinstance(speed, (list, tuple)):
+            # a speed ramp: from the first speed to the second over the shot, slowly at first (it follows the square of
+            # the time into the shot), so a shot can linger on a moment and then hurry through what follows
+            if len(speed) != 2 or start is None or duration is None or end is not None or min(speed) <= 0:
+                raise ShotListError(f"{where}: a speed ramp [from, to] takes start and duration (not end)")
+            s0, s1, T = float(speed[0]), float(speed[1]), float(duration)
+            times = [start + s0 * x + (s1 - s0) * x ** 3 / (3.0 * T * T) for x in (f / fps for f in range(max(1, int(round(T * fps)))))]
         elif pacing == "constant":
             start, end, duration, speed = solve_time(start, end, duration, speed, where)
             times = [start + f * speed / fps for f in range(max(1, int(round(duration * fps))))]
@@ -213,7 +222,8 @@ def plan(run, spec, repo, variables=None, fps=24, ship_scale=40.0):
         if is_missile and (times[0] < run.m_span[obj][0] - 1e-6 or times[-1] > run.m_span[obj][1] + 1e-6):
             a, b = run.m_span[obj]
             raise ShotListError(f"{where}: {obj} is only in flight from T+{a:.2f} to T+{b:.2f} s (shot runs T+{times[0]:.2f} to T+{times[-1]:.2f})")
-        if times[0] < run.t[0] or times[-1] > run.t[-1]:
+        # a shot may open a little before the run starts (everything coasts in), to lead into an arrival at T+0
+        if times[0] < run.t[0] - 60.0 or times[-1] > run.t[-1]:
             raise ShotListError(f"{where}: runs T+{times[0]:.2f} to T+{times[-1]:.2f} s, outside the run (T+{run.t[0]:.0f} to T+{run.t[-1]:.0f})")
 
         # camera
@@ -224,16 +234,23 @@ def plan(run, spec, repo, variables=None, fps=24, ship_scale=40.0):
         unknown = set(cam) - RIG_KEYS[kind]
         if unknown:
             raise ShotListError(f"{where}: unknown {kind} camera key(s) {sorted(unknown)} (expected {sorted(RIG_KEYS[kind])})")
-        if kind == "orbit":
+        if kind in ("orbit", "release"):
             ref = _value(cam.get("relative_to"), anchors, variables, where)
             if ref is not None and not (isinstance(ref, (list, tuple)) and len(ref) == 3):
                 raise ShotListError(f"{where}: relative_to must be a direction, such as an anchor's heading")
-            rig = {"type": "orbit", "dist": float(cam.get("distance", 4.0)), "azimuth_deg": _pair(cam.get("azimuth", [50.0, 110.0]), where),
-                   "elevation_deg": float(cam.get("elevation", 14.0)), "ref": ref}
+            if cam.get("ease", "linear") not in shot_mod.EASE:
+                raise ShotListError(f"{where}: unknown ease '{cam['ease']}' ({', '.join(shot_mod.EASE)})")
+            rig = {"type": kind, "dist": float(cam.get("distance", 4.0)), "azimuth_deg": _pair(cam.get("azimuth", [50.0, 110.0]), where),
+                   "elevation_deg": _pair(cam.get("elevation", 14.0), where), "ref": ref, "ease": cam.get("ease", "linear"),
+                   "settle_s": float(cam.get("settle", 3.0))}
         else:
             if not is_missile:
                 raise ShotListError(f"{where}: the chase camera follows a missile")
             rig = {"type": "chase", "target": run.m_launch[obj][2], "back": float(cam.get("back", 8.0)), "lift": float(cam.get("lift", 1.0)),
                    "swing_deg": _pair(cam.get("swing", 0.0), where)}
+        if cam.get("lens") is not None:                      # focal length, mm: long lenses flatten perspective
+            if not 8.0 <= float(cam["lens"]) <= 1000.0:
+                raise ShotListError(f"{where}: lens must be a focal length in mm (8 to 1000)")
+            rig["lens_mm"] = float(cam["lens"])
         shots.append({"name": name, "origin": origin, "times": times, "rig": rig})
     return {"anchors": anchors, "shots": shots, "heroes": heroes}

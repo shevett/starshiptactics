@@ -81,6 +81,11 @@ class ShotList(unittest.TestCase):
             with self.assertRaises(shotlist.ShotListError):
                 shotlist.solve_time(*bad)
 
+    def test_watermark_is_optional(self):
+        self.assertEqual(shotlist.film_settings({"film": {"watermark": "/u/someone"}})["watermark"], "/u/someone")
+        for film in ({}, {"watermark": None}, {"watermark": ""}, {"watermark": "  "}):
+            self.assertIsNone(shotlist.film_settings({"film": film})["watermark"])
+
     def test_times_are_numbers_or_anchors_with_offsets(self):
         anchors = {"kill": {"t": 100.0, "ship": "a"}, "m": {"t": 90.0, "launch": 40.0}}
         tm = lambda x: shotlist._time(x, anchors, {}, "test")
@@ -88,6 +93,36 @@ class ShotList(unittest.TestCase):
         for bad in ("nope", "kill.ship", "kill * 2", "m.nothing"):
             with self.assertRaises(shotlist.ShotListError):
                 tm(bad)
+
+    def test_camera_rises_eases_and_lets_go(self):
+        with tempfile.TemporaryDirectory() as d:
+            units = [unit("a", "red", pos=(5.0e10, 0, 0), vel=(-500, 0, 0), objective={"type": "coast"})]
+            cfg = load_config(write_scenario(d, scenario={"duration_s": 120}, units=units), REPO)
+            out = Path(d) / "o"
+            Simulation(cfg).run(out)
+            run = Run(out)
+            cam = {"distance": 5, "azimuth": 30, "elevation": [10, 40]}
+            spec = {"shots": [{"name": "rise", "follow": run.ships[0], "start": 10, "duration": 2.0, "speed": 1.0, "camera": {**cam, "ease": "out"}},
+                              {"name": "go", "follow": run.ships[0], "start": 12, "duration": 4.0, "speed": 1.0,
+                               "camera": {"rig": "release", "distance": 5, "azimuth": 30, "elevation": 40, "settle": 2}}]}
+            sh = shot.build_sequence(run, Path(d) / "s", REPO, shotlist.plan(run, spec, REPO)["shots"])
+            loc = np.array([c["loc"] for c in sh["camera"]])
+            dist = np.linalg.norm(loc, axis=1)
+            elev = np.degrees(np.arcsin(loc[:, 2] / dist))
+            self.assertAlmostEqual(elev[0], 10.0, places=3)
+            self.assertAlmostEqual(elev[47], 40.0, places=3)
+            self.assertLess(elev[47] - elev[46], (elev[1] - elev[0]) / 10)                # eased out: nearly still at the end
+            self.assertTrue(np.allclose(loc[48], loc[47], atol=1e-6))                      # the second shot picks up where the first stopped
+            self.assertTrue(np.all(np.diff(dist[48:]) > 0))                                # then the ship runs away from the camera
+            step = np.linalg.norm(loc[-1] - loc[-2])                                       # once at rest, the ship leaves at its full 500 km/s
+            self.assertAlmostEqual(step, 500.0 / 24, delta=0.01)
+            with self.assertRaises(shotlist.ShotListError):
+                shotlist.plan(run, {"shots": [{**spec["shots"][0], "camera": {**cam, "ease": "bounce"}}]}, REPO)
+            ramp = shotlist.plan(run, {"shots": [{**spec["shots"][0], "duration": 6.0, "speed": [1, 10]}]}, REPO)["shots"][0]["times"]
+            step = np.diff(ramp) * 24
+            self.assertAlmostEqual(step[0], 1.0, places=2)                                 # real time at first
+            self.assertAlmostEqual(step[-1], 10.0, delta=0.2)                              # ten times as fast by the end
+            self.assertTrue(np.all(np.diff(step) > 0))
 
     def test_a_list_is_resolved_against_a_run(self):
         with tempfile.TemporaryDirectory() as d:
@@ -137,12 +172,14 @@ class KillSequence(unittest.TestCase):
         self.assertTrue(np.allclose(ratio, ratio[0], rtol=1e-3))                        # same shrink factor every frame
         self.assertEqual([s["name"] for s in self.plan["shots"]], ["launch", "chase", "kill"])
 
-    def test_the_scenario_list_matches_the_built_in_sequence(self):
+    def test_the_scenario_lists_resolve(self):
+        # these files are edited by hand and the battle changes with the scenario, so only what must hold is checked
         mine = shotlist.plan(self.run_, shotlist.load(REPO / "scenarios" / "incursion02.shots.yaml"), REPO)
-        self.assertEqual(mine["anchors"]["killer"]["missile"], self.killer["missile"])
-        self.assertEqual(self.plan["anchors"]["kill"]["ship"], "red_majestics-003")       # the last ship destroyed
-        for a, b in zip(mine["shots"], self.plan["shots"]):
-            self.assertEqual((a["origin"], a["times"]), (b["origin"], b["times"]))
+        built_in = shotlist.plan(self.run_, shotlist.load(shotlist.BUILTIN / "kill.yaml"), REPO, {"target": "red_majestics-003"})
+        self.assertEqual(mine["anchors"]["killer"]["missile"], built_in["anchors"]["killer"]["missile"])
+        self.assertEqual(len(mine["shots"]), 3)
+        arrival = shotlist.plan(self.run_, shotlist.load(REPO / "scenarios" / "incursion02_arrival.shots.yaml"), REPO)
+        self.assertLess(arrival["shots"][0]["times"][0], arrival["anchors"]["first"]["t"])      # opens before the first ship appears
 
     def test_a_ship_that_survived_stops_the_render(self):
         with self.assertRaises(shotlist.ShotListError):

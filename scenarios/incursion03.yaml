@@ -1,0 +1,55 @@
+# Three Majestics drop out of hyperspace at rest, just outside the Sun's hyper limit, bows in-system, and run in on
+# Earth, where five Reliants are on guard. A variant of incursion02, where the raiders appear inside Earth's orbit.
+# Blue uses the cautious_defender profile: hold orbit, sortie against closing hostiles, but withdraw to the hyper limit
+# if outweighed and the safe window to escape is closing. See docs/MISSIONS.md.
+scenario:
+  id: incursion03
+  system: solar_system
+  random_seed: 12345
+  time_step_s: 1.0
+  duration_s: 28800
+  snapshot_interval_s: 10
+  orbital_phase_strategy: random
+  sensors:
+    detection_range_km: 10000000     # PLACEHOLDER (see docs/OPEN_QUESTIONS.md)
+  orbital_phase_deg:
+    earth: 0
+
+factions:
+  - id: red
+  - id: blue
+
+units:
+  - group: red_majestics
+    faction: red
+    class: majestic
+    count: 3
+    position_km: {x: 381000000, y: 2000000, z: 0}      # just outside the hyper limit, on Earth's side of the Sun
+    velocity_km_s: {x: 0, y: 0, z: 0}                  # at rest
+    orientation:
+      forward_vector: [-1, 0, 0]                       # bows in-system
+    formation:
+      type: line_abreast
+      spacing_km: 400
+      offsets_km: [[0, 0, 0], [0, 0, 100], [0, 0, 0]]     # per ship, added to its slot: the middle ship rides 100 km high
+    # drops out of hyperspace here, at rest, as the scenario opens; stagger_s: seconds after the first ship, per ship
+    arrival: {type: hyper_translation, time_s: 0, stagger_s: [0, 2, 1]}
+    mission:
+      profile: aggressive_transit
+      objective: {type: transit_to_orbit, body: earth, altitude_km: 30000}
+    engagement: {mode: fire_at_will, missile: standard_nuclear}
+
+  - group: blue_defenders
+    faction: blue
+    class: reliant
+    count: 5
+    orbit: {body: earth, altitude_km: 20000, spacing_km: 500}
+    mission:
+      profile: cautious_defender
+      objective: {type: transit_to_orbit, body: earth, altitude_km: 20000}   # i.e. stay where it is
+      profile_params: {force_ratio: 2.5, escape_margin_s: 900}
+    engagement: {mode: fire_at_will, missile: standard_nuclear}
+
+termination:
+  - type: duration_reached
+  - type: all_objectives_complete   # battle over: survivors have settled (hulks and departed ships do not count)

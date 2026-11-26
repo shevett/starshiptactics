@@ -8,6 +8,44 @@ from .engine import Simulation
 from .errors import ConfigError
 
 
+def import_frames(src, dest):
+    """Copy rendered frames from a folder or a zip into dest as 00000.png, 00001.png ... in name order. Returns the count."""
+    import shutil
+    import tempfile
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        if src.is_file():
+            with zipfile.ZipFile(src) as z:
+                z.extractall(tmp)
+            src = Path(tmp)
+        files = sorted(p for p in src.rglob("*") if p.suffix.lower() == ".png" and p.is_file())
+        if not files:
+            return 0
+        dest.mkdir(parents=True, exist_ok=True)
+        for old in dest.glob("*.png"):
+            old.unlink()
+        for k, p in enumerate(files):
+            shutil.copyfile(p, dest / f"{k:05d}.png")
+        return len(files)
+
+
+def encode(out, name, fps, frames, watermark=None):
+    """Join <out>/frames/*.png into <out>/<name>.mp4. watermark: text drawn in the lower left corner of every frame."""
+    import shutil
+    import subprocess
+    mp4 = out / f"{name}.mp4"
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(out / "frames" / "%05d.png"), "-frames:v", str(frames)]
+    if watermark:
+        esc = lambda p: str(p).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        text = out / "watermark.txt"                      # read from a file, so the text needs no escaping
+        text.write_text(watermark)
+        font = subprocess.run(["fc-match", "-f", "%{file}", "DejaVu Sans:bold"], capture_output=True, text=True).stdout if shutil.which("fc-match") else ""
+        cmd += ["-vf", f"drawtext=textfile='{esc(text.resolve())}'" + (f":fontfile='{esc(font)}'" if font else "") +
+                ":x=h/30:y=h-th-h/36:fontsize=h/28:fontcolor=white@0.6:shadowcolor=black@0.6:shadowx=1:shadowy=1"]
+    subprocess.run(cmd + ["-pix_fmt", "yuv420p", "-crf", "18", str(mp4)], check=False)
+    return mp4
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m simulator")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -38,6 +76,8 @@ def main(argv=None):
     rn.add_argument("--frames", help="render only frames a:b (for a quick look)")
     rn.add_argument("--sequence", choices=("kill",), help="kill: launch, missile chase and destruction of --target (default: the last ship destroyed)")
     rn.add_argument("--shots", help="a shot list file (see docs/RENDER.md), e.g. scenarios/incursion02.shots.yaml")
+    rn.add_argument("--bake", action="store_true", help="write a self-contained <name>.blend (keyframed, textures packed) for a render farm; no rendering")
+    rn.add_argument("--frames-from", metavar="DIR_OR_ZIP", help="build the film from frames rendered elsewhere (a folder or zip of images, in order)")
     rn.add_argument("--shot-only", action="store_true", help="write shot.json and stop (no Blender)")
     args = ap.parse_args(argv)
 
@@ -72,20 +112,34 @@ def main(argv=None):
         print(f"{sh['frames']} frames at {sh['fps']} fps -> {out}/shot.json")
         if args.shot_only:
             return 0
+        if args.frames_from:
+            n = import_frames(Path(args.frames_from), out / "frames")
+            if n != sh["frames"]:
+                print(f"render: {args.frames_from} has {n} frames, but this film has {sh['frames']}; not building the video", file=sys.stderr)
+                return 1
+            print(f"Wrote {encode(out, name, sh['fps'], sh['frames'], film.get('watermark'))}")
+            return 0
         blender = shutil.which("blender")
         if not blender:
             print("render: blender not found on PATH", file=sys.stderr)
             return 2
         cmd = [blender, "-b", "-P", str(Path(__file__).resolve().parent / "render" / "blender_scene.py"), "--", str(out / "shot.json")]
+        if args.bake:
+            blend = (out / f"{name}.blend").resolve()
+            if subprocess.run(cmd + ["--bake", str(blend)], stdout=subprocess.DEVNULL).returncode:
+                return 1
+            print(f"Wrote {blend} ({blend.stat().st_size / 1e6:.1f} MB): Blender frames 1 to {sh['frames']}, {sh['fps']} fps, "
+                  f"{'x'.join(map(str, sh['resolution']))}, {'Cycles' if film['engine'] == 'cycles' else 'Eevee'}")
+            return 0
         if args.frames:
             cmd += ["--frames", args.frames]
+        else:                                             # a full render: frames left by an earlier, longer render would end up in the film
+            for old in (out / "frames").glob("*.png"):
+                old.unlink()
         if subprocess.run(cmd).returncode:
             return 1
         if shutil.which("ffmpeg") and not args.frames:
-            mp4 = out / f"{name}.mp4"
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(sh["fps"]), "-i", str(out / "frames" / "%05d.png"),
-                            "-pix_fmt", "yuv420p", "-crf", "18", str(mp4)], check=False)
-            print(f"Wrote {mp4}")
+            print(f"Wrote {encode(out, name, sh['fps'], sh['frames'], film.get('watermark'))}")
         return 0
 
     if args.cmd == "report":

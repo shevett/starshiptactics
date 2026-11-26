@@ -533,7 +533,11 @@ The core simulator does not need to simulate FTL travel; it only needs to suppor
 straight out from the star) burns flat out and, on reaching the limit, emits `hyper_departure` and leaves the field:
 it is frozen in place (`"departed": true` in `state.jsonl`), dropped from every faction's contacts (`contact_lost`,
 reason `hyper_departure`) and can no longer be targeted or hit. Only ships that are departing can leave; a ship merely
-flying across the boundary is unaffected. **Not yet implemented:** arrival (entering the system at the boundary).
+flying across the boundary is unaffected.
+
+**Implemented: arrival.** A group with `arrival: {type: hyper_translation, time_s: <seconds>}` appears at its given
+position and velocity at that time (`hyper_arrival` per ship); before then its ships are off the field. See
+docs/M1_NOTES.md.
 
 The Solar System limit currently comes from the `spectral_class_linear` rule in `systems/solar_system.yaml`
 (21.12 light-minutes for Sol, about 2.54 AU); it is a lookup on the star's spectral class, not derived from gravity
