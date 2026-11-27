@@ -32,8 +32,10 @@ units:
       type: line_abreast
       spacing_km: 400
       offsets_km: [[0, 0, 0], [0, 0, 100], [0, 0, 0]]     # per ship, added to its slot: the middle ship rides 100 km high
-    # drops out of hyperspace here, at rest, as the scenario opens; stagger_s: seconds after the first ship, per ship
-    arrival: {type: hyper_translation, time_s: 0, stagger_s: [0, 2, 1]}
+    # drops out of hyperspace here, at rest, as the scenario opens; stagger_s: seconds after the first ship, per ship.
+    # hold_s: seconds each ship drifts after its own arrival (wedge up, not yet pushing) before it gets under way, so
+    # the three move out one after another (at T+6, T+9 and T+8 s) and not in unison.
+    arrival: {type: hyper_translation, time_s: 0, stagger_s: [0, 2, 1], hold_s: [6, 7, 7]}
     mission:
       profile: aggressive_transit
       objective: {type: transit_to_orbit, body: earth, altitude_km: 30000}

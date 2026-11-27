@@ -14,6 +14,8 @@ from simulator.physics.orbits import Ephemeris
 from simulator.sensors.lightdelay import History, observe
 from simulator.units import C, G0, pick_vector
 
+from simulator.paths import scenario_file
+
 from .helpers import REPO, unit, write_scenario
 
 
@@ -85,7 +87,7 @@ class Config(unittest.TestCase):
 
 class Orbits(unittest.TestCase):
     def setUp(self):
-        self.cfg = load_config(REPO / "scenarios" / "example.yaml")
+        self.cfg = load_config(scenario_file("example_engagement"))
         self.eph = Ephemeris(self.cfg.bodies, 1)
 
     def test_earth_returns_after_one_period(self):
@@ -260,5 +262,5 @@ class HyperLimit(unittest.TestCase):
             hl("X1")
 
     def test_solar_system_value(self):
-        cfg = load_config(REPO / "scenarios" / "example.yaml")
+        cfg = load_config(scenario_file("example_engagement"))
         self.assertAlmostEqual(cfg.hyper_limit_m, 21.12 * 60 * C, delta=1.0)

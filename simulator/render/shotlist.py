@@ -16,7 +16,7 @@ from . import shot as shot_mod
 
 BUILTIN = Path(__file__).resolve().parent / "sequences"
 
-FILM_KEYS = {"fps", "resolution", "ship_scale", "engine", "watermark"}
+FILM_KEYS = {"fps", "resolution", "ship_scale", "engine", "watermark"}      # also what a profile may set
 SHOT_KEYS = {"name", "follow", "camera", "start", "end", "duration", "speed", "pacing", "end_range"}
 ORBIT_KEYS = {"distance", "azimuth", "elevation", "relative_to", "ease", "lens"}
 RIG_KEYS = {"orbit": ORBIT_KEYS, "release": ORBIT_KEYS | {"settle"}, "chase": {"back", "lift", "swing", "lens"}}
@@ -39,9 +39,12 @@ def load(path):
         raise ShotListError(f"{path.name}: unknown section(s) {sorted(unknown)} (expected film, anchors, shots)")
     if not spec.get("shots"):
         raise ShotListError(f"{path.name}: no shots")
-    unknown = set(spec.get("film") or {}) - FILM_KEYS
+    unknown = set(spec.get("film") or {}) - FILM_KEYS - {"profiles"}
     if unknown:
-        raise ShotListError(f"{path.name}: unknown film setting(s) {sorted(unknown)} (expected {sorted(FILM_KEYS)})")
+        raise ShotListError(f"{path.name}: unknown film setting(s) {sorted(unknown)} (expected {sorted(FILM_KEYS | {'profiles'})})")
+    profiles = (spec.get("film") or {}).get("profiles") or {}
+    if not isinstance(profiles, dict) or any(not isinstance(v, dict) or set(v) - FILM_KEYS for v in profiles.values()):
+        raise ShotListError(f"{path.name}: film.profiles must map a name to film settings ({sorted(FILM_KEYS)})")
     return spec
 
 
@@ -167,9 +170,15 @@ def _pair(v, where):
     return [float(v[0]), float(v[1])]
 
 
-def film_settings(spec, **overrides):
-    """Film settings: explicit overrides (the command line) win over the list's film section, then the defaults."""
+def film_settings(spec, profile=None, **overrides):
+    """Film settings: explicit overrides (the command line) win over the named profile (film.profiles in the list, such
+    as a small, slow-frame-rate preview), which wins over the list's film section, then the defaults."""
     film = {"fps": 24, "resolution": [1280, 720], "ship_scale": 40.0, "engine": "eevee", **(spec.get("film") or {})}
+    profiles = film.pop("profiles", None) or {}
+    if profile:
+        if profile not in profiles:
+            raise ShotListError(f"no film profile '{profile}': this shot list has {', '.join(sorted(profiles)) or 'none'}")
+        film.update(profiles[profile])
     film.update({k: v for k, v in overrides.items() if v is not None})
     film["watermark"] = str(film.get("watermark") or "").strip() or None      # empty or missing: no watermark
     return film
@@ -240,7 +249,7 @@ def plan(run, spec, repo, variables=None, fps=24, ship_scale=40.0):
                 raise ShotListError(f"{where}: relative_to must be a direction, such as an anchor's heading")
             if cam.get("ease", "linear") not in shot_mod.EASE:
                 raise ShotListError(f"{where}: unknown ease '{cam['ease']}' ({', '.join(shot_mod.EASE)})")
-            rig = {"type": kind, "dist": float(cam.get("distance", 4.0)), "azimuth_deg": _pair(cam.get("azimuth", [50.0, 110.0]), where),
+            rig = {"type": kind, "dist": _pair(cam.get("distance", 4.0), where), "azimuth_deg": _pair(cam.get("azimuth", [50.0, 110.0]), where),
                    "elevation_deg": _pair(cam.get("elevation", 14.0), where), "ref": ref, "ease": cam.get("ease", "linear"),
                    "settle_s": float(cam.get("settle", 3.0))}
         else:

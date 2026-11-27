@@ -17,21 +17,55 @@ Useful files:
 - `rules/navigation.yaml` — safety/navigation rules
 - `rules/simulation.yaml` — deterministic simulation defaults/constants
 - `rules/doctrine.yaml` — initial doctrine hooks
-- `scenarios/example.yaml`, `scenarios/earth_orbit.yaml` — example scenarios (the latter shows orbits)
+- `scenarios/example_engagement/`, `scenarios/earth_orbit/` — example scenarios (the latter shows orbits)
 - `docs/MISSIONS.md` — group missions: detection, reaction rules, engage / withdraw / objective stack
-- `scenarios/incursion01.yaml`, `scenarios/incursion02.yaml` — fleet engagements (the latter shows a cautious defender withdrawing)
-- `docs/CLAUDE_HANDOFF.md` — implementation handoff
+- `scenarios/incursion01/`, `scenarios/incursion02/` — fleet engagements (the latter shows a cautious defender withdrawing)
+- `scenarios/incursion03/` — an arrival from hyperspace at the hyper limit, with its film shot lists
+- `docs/RENDER.md` — cinematic renders with Blender: shot lists, previews, render farms
 - `docs/OPEN_QUESTIONS.md` — values intentionally left unresolved
 
 ## Running
 
+## Layout
+
+The checkout is source only. Everything in it is needed to rebuild, and nothing that is built is kept in it.
+
+```
+scenarios/<id>/scenario.yaml     a scenario; the folder name is its id, and that id is its name in every command
+scenarios/<id>/shots/<film>.yaml shot lists: the films made from that scenario
+classes/  rules/  systems/       ship and missile classes, rules, star systems (shared by all scenarios)
+images/                          reference art; the placeholder hulls and their textures are built from it
+simulator/  viewer/  tests/      code
+```
+
+Runs, frames, Blender files and films go to a working directory outside the checkout: `~/starshiptactics-work`, or
+`$STARSHIP_WORK`, or `--work DIR` before the command. All of it can be deleted and rebuilt.
+
+```
+<work>/runs/<id>/                      a simulation run: state, missiles, events, metadata, report
+<work>/renders/<id>/<film>[.<profile>]/  shot data, the Blender scene, frames, a render-farm bake
+<work>/films/<id>_<film>[.<profile>].mp4 finished films
+```
+
+From a fresh clone, one command rebuilds a film: it runs the simulation if there is no run yet, or if the scenario,
+its data files or the simulator's code have changed since the stored run, and then renders.
+
 ```bash
-python -m simulator validate scenarios/example.yaml
-python -m simulator run scenarios/example.yaml        # writes output/<scenario id>/ (~45 s for the example)
-python -m simulator serve --run output/example_engagement   # tactical viewer at http://localhost:8000/viewer/
-python -m simulator report output/incursion01          # after-action analysis -> output/incursion01/report.html (self-contained)
+python -m simulator render incursion03/arrival --profile preview    # small and quick; drop --profile for the full film
+python -m simulator where                                           # the working directory and what is in it
+```
+
+## Running
+
+```bash
+python -m simulator validate example_engagement
+python -m simulator run example_engagement             # writes <work>/runs/example_engagement/ (~45 s)
+python -m simulator serve example_engagement           # tactical viewer at http://localhost:8000/viewer/
+python -m simulator report incursion01                 # after-action analysis -> report.html in the run (self-contained)
 python -m unittest discover -s tests -t .
 ```
+
+A scenario is named by its id; a path to a scenario file also works (`run`, `validate`).
 
 Requires Python 3, PyYAML and NumPy. `viewer/index.html` is a read-only tactical plot (play/pause, speed,
 scrub, pan/zoom, follow, trails, vectors, light-delayed faction tracks); it can also load the three output files

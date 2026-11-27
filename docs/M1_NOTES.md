@@ -23,7 +23,7 @@ missiles and grasers are not implemented (weapon objectives raise a ConfigError 
 
 ## Orbits (added after the first milestone-1 pass)
 
-Scenario syntax (`scenarios/earth_orbit.yaml` is a worked example; `body` is a key from `systems/*.yaml`):
+Scenario syntax (`scenarios/earth_orbit/scenario.yaml` is a worked example; `body` is a key from `systems/*.yaml`):
 
 ```yaml
 - group: blue_picket            # start already in orbit (replaces position_km / velocity_km_s)
@@ -93,7 +93,7 @@ engagement:
   With no range set the behaviour is unchanged (everything is detectable once its light arrives).
 - `simulator/doctrine/mission.py` classifies postures, evaluates reaction rules and keeps one engage behaviour per
   group; `engine._engage_command` flies it (braking-curve guidance in the target's frame, standoff range).
-- `scenarios/incursion01.yaml` now gives red `profile: aggressive_transit` with a 10,000,000 km placeholder
+- `scenarios/incursion01/scenario.yaml` now gives red `profile: aggressive_transit` with a 10,000,000 km placeholder
   detection range; blue still holds its orbit and fires at will (no mission reactions).
 
 ## Hyper-limit departure
@@ -113,6 +113,10 @@ engagement:
   ship its own delay after `time_s` (`stagger_s: [0, 2, 1]`). A later ship appears in its formation slot beside the
   earlier ones, not behind them. A ship appears on the first time step at or after its time, so with a 1 s step delays
   are whole seconds.
+  `hold_s` (one number, or one per ship) makes each ship drift for that long after its own arrival before it gets under
+  way: no thrust and no steering until then, then an `under_way` event (group, position, velocity). Ships with
+  different holds move out one after another; nothing closes the gap afterwards, so they stay strung out along their
+  course.
 - `formation.offsets_km`: one `[x, y, z]` per ship, added to its formation slot (system axes), for example to lift one
   ship out of the plane. The group keeps these offsets while it holds formation.
 - Leaving via a rule is the `withdraw` action (docs/MISSIONS.md); it reuses this mechanic.
@@ -126,4 +130,4 @@ engagement:
 - A `transit_to_orbit` objective is now satisfied immediately if the ship is already on that orbit (previously a ship
   starting in orbit braked to rest first). `reset_objective` re-establishes the orbit after a sortie or an abandoned
   withdrawal.
-- `scenarios/incursion02.yaml`: five Reliants (cautious_defender) against three Majestics.
+- `scenarios/incursion02/scenario.yaml`: five Reliants (cautious_defender) against three Majestics.

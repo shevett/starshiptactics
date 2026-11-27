@@ -11,6 +11,7 @@ import yaml
 
 from .doctrine import registry
 from .errors import ConfigError
+from .paths import SCENARIO_FILE, repo_root
 from .units import C, DAY_S, G0, KM, deg, pick_vector
 
 OBJECTIVE_TYPES = {"coast", "hold_position", "transit_to_point", "transit_to_orbit", "transit_to_hyper_limit"}
@@ -58,7 +59,7 @@ class Group:
     orbit: dict | None = None      # initial circular orbit around a body (instead of position/velocity)
     engagement: dict | None = None # rules of engagement (weapons); None = hold fire
     mission: dict | None = None    # reaction rules layered over the objective; None = objective only
-    arrival: dict | None = None    # {type: hyper_translation, time_s, delays}: the group drops out of hyperspace at its start state
+    arrival: dict | None = None    # {type: hyper_translation, time_s, delays, holds}: the group drops out of hyperspace at its start state
     slot_offsets: list | None = None   # per ship: an extra offset (m) from its formation slot
 
 
@@ -487,7 +488,7 @@ def _parse_orbit(spec, where, bodies, nav_margin, *, allow_phase):
 
 def load_config(scenario_path, root=None):
     scenario_path = Path(scenario_path).resolve()
-    root = Path(root).resolve() if root else scenario_path.parent.parent
+    root = Path(root).resolve() if root else repo_root(scenario_path)
     problems, warnings, hashes = [], [], {}
 
     def load(rel):
@@ -522,6 +523,10 @@ def load_config(scenario_path, root=None):
     for key in ("id", "system", "random_seed"):
         if key not in sc:
             problems.append(f"scenario.{key}: required")
+    # scenarios/<id>/scenario.yaml: the folder is how a scenario is named everywhere else (runs, renders, films)
+    if (scenario_path.name == SCENARIO_FILE and scenario_path.parent.parent.name == "scenarios" and "id" in sc
+            and scenario_path.parent.name != str(sc["id"])):
+        problems.append(f"scenario.id: '{sc['id']}' must match its folder, scenarios/{scenario_path.parent.name}/")
     if problems:
         raise ConfigError(problems)
 
@@ -649,8 +654,9 @@ def load_config(scenario_path, root=None):
             arrival = None
             if u.get("arrival") is not None:
                 a = u["arrival"]
-                if not isinstance(a, dict) or set(a) - {"type", "time_s", "stagger_s"} or a.get("type") != "hyper_translation":
-                    raise ValueError(f"{w}.arrival: expected {{type: hyper_translation, time_s: <seconds>, stagger_s: <seconds or a list>}}")
+                if not isinstance(a, dict) or set(a) - {"type", "time_s", "stagger_s", "hold_s"} or a.get("type") != "hyper_translation":
+                    raise ValueError(f"{w}.arrival: expected {{type: hyper_translation, time_s: <seconds>, stagger_s: <seconds or a list>, "
+                                     f"hold_s: <seconds or a list>}}")
                 if orbit:
                     raise ValueError(f"{w}.arrival: a group that starts in orbit cannot arrive from hyperspace; give position and velocity")
                 at = float(a.get("time_s", 0.0))
@@ -660,7 +666,11 @@ def load_config(scenario_path, root=None):
                 delays = [float(x) for x in st] if isinstance(st, list) else [k * float(st) for k in range(count)]
                 if len(delays) != count or min(delays) < 0 or at + max(delays) >= float(sc.get("duration_s", math.inf)):
                     raise ValueError(f"{w}.arrival.stagger_s: need a delay >= 0, or one per ship ({count}), within the scenario")
-                arrival = {"type": "hyper_translation", "time_s": at, "delays": delays}
+                hd = a.get("hold_s", 0.0)                   # how long each ship drifts after its own arrival before getting under way
+                holds = [float(x) for x in hd] if isinstance(hd, list) else [float(hd)] * count
+                if len(holds) != count or min(holds) < 0:
+                    raise ValueError(f"{w}.arrival.hold_s: need a time >= 0, or one per ship ({count})")
+                arrival = {"type": "hyper_translation", "time_s": at, "delays": delays, "holds": holds}
                 # the primary star is the origin of the system frame
                 if cfg.hyper_limit_m is not None and math.sqrt(sum(c * c for c in pos)) < cfg.hyper_limit_m:
                     warnings.append(f"{w}.arrival: the arrival point is {math.sqrt(sum(c * c for c in pos)) / 1e9:.0f} million km from the star, "

@@ -76,6 +76,9 @@ class Run:
         # ships that arrive from hyperspace: (time, position, velocity) at the moment they appear
         self.arrive = {e["actor_id"]: (e["t"], np.array(e["data"]["position_m"]), np.array(e["data"]["velocity_m_s"]))
                        for e in self.events if e["type"] == "hyper_arrival"}
+        # ships that drift after arriving: (time, position, velocity) at the moment they start to accelerate
+        self.underway = {e["actor_id"]: (e["t"], np.array(e["data"]["position_m"]), np.array(e["data"]["velocity_m_s"]))
+                         for e in self.events if e["type"] == "under_way"}
         self.m_span = {m: (self.m_launch[m][0] if m in self.m_launch else self.mt[k],
                            min(self.m_end.get(m, np.inf), self.mt[self.m_last[m]] + self.m_interval))
                        for m, k in self.m_first.items()}
@@ -98,21 +101,41 @@ class Run:
             ta, pa, va = arr if arr is not None and t < arr[0] else (self.t[0], self.pos[i, 0], self.vel[i, 0])
             ka = self._bracket(ta)[0]
             return {"p": pa + va * (t - ta), "v": va, "q": self.quat[i, ka], "dead": False, "gone": arr is not None and t < arr[0]}
-        if arr is not None and self.t[k] < arr[0]:           # the stored sample before this one is the held arrival state
-            h = self.t[k2] - arr[0]
-            p = hermite((t - arr[0]) / h, h, arr[1], arr[2], self.pos[i, k2], self.vel[i, k2])
-            return {"p": p, "v": self.vel[i, k2], "q": slerp(self.quat[i, k], self.quat[i, k2], (t - arr[0]) / h), "dead": False, "gone": False}
+        # An arrival, and the moment a ship gets under way after it, fall between stored samples. They are exact states,
+        # so the path runs through them: from the arrival (not the held sample before it) to the start of the push
+        # (a drift), and from there to the next sample.
+        knots = [(self.t[k], self.pos[i, k], self.vel[i, k])] if arr is None or self.t[k] >= arr[0] else []
+        knots += [e for e in (arr, self.underway.get(obj_id)) if e is not None and self.t[k] < e[0] < self.t[k2]]
+        if len(knots) > 1 or (knots and knots[0][0] != self.t[k]) or not knots:
+            knots = sorted(knots, key=lambda e: e[0]) + [(self.t[k2], self.pos[i, k2], self.vel[i, k2])]
+            j = max(n for n in range(len(knots) - 1) if knots[n][0] <= t or n == 0)
+            (ta, pa, va), (tb, pb, vb) = knots[j], knots[j + 1]
+            x = float(np.clip((t - ta) / (tb - ta), 0.0, 1.0))
+            return {"p": hermite(x, tb - ta, pa, va, pb, vb), "v": va * (1 - x) + vb * x,
+                    "q": slerp(self.quat[i, k], self.quat[i, k2], s), "dead": bool(self.dead[i, k]), "gone": False}
         p = hermite(s, h, self.pos[i, k], self.vel[i, k], self.pos[i, k2], self.vel[i, k2])
         v = self.vel[i, k] * (1 - s) + self.vel[i, k2] * s
         return {"p": p, "v": v, "q": slerp(self.quat[i, k], self.quat[i, k2], s),
                 "dead": bool(self.dead[i, k]), "gone": bool(self.gone[i, k])}
 
-    def drive(self, obj_id, t):
-        """How hard a ship is accelerating at t, as a fraction (0..1) of the hardest it accelerates in the run."""
+    def drive(self, obj_id, t, rise_s=1.5):
+        """How hard a ship is accelerating at t, as a fraction (0..1) of the hardest it accelerates in the run. A ship
+        that drifts after arriving from hyperspace is at 0 until it gets under way, then comes up over rise_s seconds
+        (the simulator's push starts at once; the rise is for the look of the wedge)."""
         i = self.index[obj_id]
         top = float(self.acc[i].max())
         k, k2, _, s = self._bracket(max(t, self.t[0]))
-        return 0.0 if top <= 0 else float((self.acc[i, k] * (1 - s) + self.acc[i, k2] * s) / top)
+        if top <= 0:
+            return 0.0
+        go = self.underway.get(obj_id)
+        level = self.acc[i, k] * (1 - s) + self.acc[i, k2] * s
+        if go is not None:
+            if t < go[0]:
+                return 0.0
+            if self.t[k] <= go[0]:                 # the push started after the stored sample before t: that sample says "none yet"
+                level = self.acc[i, k2]
+            level *= min(1.0, (t - go[0]) / rise_s)
+        return float(level / top)
 
     def missiles_alive(self, t):
         """ids of missiles in flight at time t (from launch to detonation, or to the end of their stored records)."""

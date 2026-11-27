@@ -47,7 +47,7 @@ def build(run_dir):
     run = Path(run_dir)
     if not (run / "metadata.json").exists():
         raise SystemExit(f"error: {run} is not a run directory (no metadata.json). "
-                         f"Run the scenario first, e.g. python3 -m simulator run scenarios/incursion01.yaml")
+                         f"Run the scenario first, e.g. python3 -m simulator run incursion01")
     meta =json.loads((run / "metadata.json").read_text())
     events = _jsonl(run / "events.jsonl")
     states = _jsonl(run / "state.jsonl")

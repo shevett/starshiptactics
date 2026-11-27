@@ -1,0 +1,20 @@
+# Look-development still for incursion03: one ship's impeller wedge seen almost bow-on.
+# One frame is enough to judge the wedge; the pattern and brightness do change from frame to frame.
+#   python3 -m simulator render incursion03/wedge_close --frames 215:216
+film:
+  fps: 24
+  resolution: [1280, 720]
+  ship_scale: 40
+
+anchors:
+  first: {event: hyper_arrival, which: first}            # the first ship of the group to appear
+
+shots:
+  # Close on the first ship to arrive (8 degrees off its bow and a little above), real time, from before it appears until
+  # its wedge is up and it has started to accelerate.
+  - name: arrival
+    follow: first.ship
+    camera: {rig: orbit, distance: 9, azimuth: 8, elevation: 13, relative_to: [-1, 0, 0], lens: 50}
+    start: first - 2.5
+    duration: 10.0
+    speed: 1.0

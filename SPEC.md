@@ -102,7 +102,7 @@ Deterministic combat decision rules. Doctrine expresses what a ship or formation
 
 Initial doctrine is intentionally thin. It will expand after the physics/navigation core works.
 
-### 3.7 `scenarios/*.yaml`
+### 3.7 `scenarios/<id>/scenario.yaml`
 
 A scenario defines a particular engagement:
 
@@ -536,7 +536,8 @@ reason `hyper_departure`) and can no longer be targeted or hit. Only ships that 
 flying across the boundary is unaffected.
 
 **Implemented: arrival.** A group with `arrival: {type: hyper_translation, time_s: <seconds>}` appears at its given
-position and velocity at that time (`hyper_arrival` per ship); before then its ships are off the field. See
+position and velocity at that time (`hyper_arrival` per ship); before then its ships are off the field. `stagger_s` spreads the arrivals and `hold_s` the
+moment each ship then starts to accelerate (`under_way` per ship). See
 docs/M1_NOTES.md.
 
 The Solar System limit currently comes from the `spectral_class_linear` rule in `systems/solar_system.yaml`

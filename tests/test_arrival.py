@@ -82,6 +82,29 @@ class Arrival(unittest.TestCase):
                 with self.assertRaises(ConfigError):
                     load_config(write_scenario(d, units=[unit("a", count=2, **bad)]), REPO)
 
+    def test_ships_hold_after_arriving_then_get_under_way_one_by_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            units = [unit("a", "red", count=2, pos=(8.0e8, 0, 0), vel=(0, 0, 0), orientation={"forward_vector": [-1, 0, 0]},
+                          objective={"type": "transit_to_point", "destination_km": [7.0e8, 0, 0]},
+                          formation={"type": "line_abreast", "spacing_km": 400},
+                          arrival={"type": "hyper_translation", "time_s": 2, "stagger_s": [0, 1], "hold_s": [5, 9]})]
+            cfg, out, ev = run(d, units)
+            self.assertEqual(cfg.groups[0].arrival["holds"], [5.0, 9.0])
+            go = {e["actor_id"]: e for e in ev if e["type"] == "under_way"}
+            self.assertEqual([go[k]["t"] for k in ("a-001", "a-002")], [7.0, 12.0])        # arrival + its own hold
+            r = Run(out)
+            x = lambda s, t: r.state(s, t)["p"][0]
+            self.assertAlmostEqual(x("a-001", 6.9), 8.0e11, delta=1.0)                     # drifting: it arrived at rest
+            self.assertAlmostEqual(x("a-002", 11.9), 8.0e11, delta=1.0)
+            a = (8.0e11 - x("a-001", 20.0)) / (0.5 * 13.0 ** 2)                            # pushing since T+7
+            self.assertAlmostEqual(8.0e11 - x("a-001", 9.0), 0.5 * a * 2.0 ** 2, delta=0.02 * a)       # also between stored samples
+            self.assertAlmostEqual(8.0e11 - x("a-002", 14.0), 0.5 * a * 2.0 ** 2, delta=0.02 * a)
+            self.assertEqual([r.drive("a-001", t) for t in (3.0, 6.9)], [0.0, 0.0])
+            self.assertTrue(0.0 < r.drive("a-001", 7.5) < r.drive("a-001", 9.0) <= 1.0)   # the wedge's level rises as it starts to push
+            self.assertEqual(r.drive("a-002", 11.0), 0.0)
+            with self.assertRaises(ConfigError):
+                load_config(write_scenario(d, units=[unit("a", count=2, arrival={"type": "hyper_translation", "hold_s": [1, 2, 3]})]), REPO)
+
     def test_bad_arrivals_are_rejected_and_inside_the_limit_warns(self):
         with tempfile.TemporaryDirectory() as d:
             for bad in ({"type": "teleport"}, {"type": "hyper_translation", "time_s": -1}, {"type": "hyper_translation", "when": 3}):

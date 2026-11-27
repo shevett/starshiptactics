@@ -112,7 +112,7 @@ returns to an orbit it started in re-forms it in its original order and spacing.
 `mission_changed` carries the behaviour (`engage` / `withdraw` / `objective`), the reason in words (for example
 "force ratio 4.60; escape margin 313 s"), and for a withdrawal the heading, margin and time to the hyper limit.
 `hyper_departure` is emitted per ship (SPEC section 21). `maneuver_command.objective` reads `engage` / `withdraw` while a
-behaviour is active. The report (`python3 -m simulator report <run>`) lists contact, every switch, and departures.
+behaviour is active. The report (`python3 -m simulator report <scenario id>`) lists contact, every switch, and departures.
 
 ## Limits (placeholders and known gaps)
 

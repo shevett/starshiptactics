@@ -1,0 +1,39 @@
+# Shot list for incursion03: the Majestics drop out of hyperspace at rest at the hyper limit, bring their wedges up and
+# run in-system. Format: docs/RENDER.md.
+#   python3 -m simulator render incursion03/arrival                      (the film; --profile preview for a quick one)
+#   python3 -m simulator render incursion03/arrival --shot-only          (check the timings without rendering)
+film:
+  fps: 24
+  resolution: [1280, 720]
+  ship_scale: 40
+  watermark: /u/penkster          # drawn in the lower left corner of the film; leave empty or remove for none
+  profiles:                       # --profile preview: small and at half the frame rate, for a quick look
+    preview: {fps: 12, resolution: [640, 360]}
+
+anchors:
+  first: {event: hyper_arrival, which: first}            # the first ship of the group to appear
+  centre: {event: hyper_arrival, ship: red_majestics-002}
+
+shots:
+  # In-system of the formation (between the arriving ships and the Sun), just above the ecliptic and a little to the
+  # ships' starboard, looking back at their bows on a long lens, so all three arrivals are in frame and the sail discs
+  # face the camera. Angles are measured from the in-system direction (-x): azimuth 0 is dead ahead of the ships,
+  # positive puts the camera on the side that makes them pass on its left. The angles are fixed and only the distance
+  # changes: the camera moves slowly out-system, straight toward the ships, and eases to a stop while the rings form,
+  # the ships come through, the sails fade and the wedges come up. With no turn in it the stars do not slide.
+  - name: arrival
+    follow: centre.ship
+    camera: {rig: orbit, distance: [124, 104], azimuth: 8, elevation: 5, relative_to: [-1, 0, 0], ease: out, lens: 135}
+    start: first - 2.5
+    duration: 10.0
+    speed: 1.0
+
+  # From where that shot ended, the camera stays put. The ships accelerate in-system at about 420 g: toward the camera,
+  # past it below and on its left, and on toward the Sun. The camera turns to follow the middle ship, and time speeds
+  # up (from real time to thirty-four times) as they shrink to points beside the Sun.
+  - name: run_in
+    follow: centre.ship
+    camera: {rig: release, distance: 104, azimuth: 8, elevation: 5, relative_to: [-1, 0, 0], settle: 2, lens: 135}
+    start: first + 7.5
+    duration: 14.0
+    speed: [1, 34]

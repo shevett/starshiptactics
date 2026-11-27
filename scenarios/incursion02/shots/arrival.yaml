@@ -1,10 +1,12 @@
 # Shot list for incursion02: the Majestics dropping out of hyperspace as the scenario opens. Format: docs/RENDER.md.
-#   python3 -m simulator render output/incursion02 --shots scenarios/incursion02_arrival.shots.yaml
+#   python3 -m simulator render incursion02/arrival
 film:
   fps: 24
   resolution: [1280, 720]
   ship_scale: 40
   watermark: /u/penkster          # drawn in the lower left corner of the film; leave empty or remove for none
+  profiles:                       # --profile preview: small and at half the frame rate, for a quick look
+    preview: {fps: 12, resolution: [640, 360]}
 
 anchors:
   first: {event: hyper_arrival, which: first}            # the first ship of the group to appear

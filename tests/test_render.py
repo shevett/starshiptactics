@@ -10,6 +10,8 @@ from simulator.engine import Simulation
 from simulator.render import hulls, shot, shotlist
 from simulator.render.interp import Run, hermite, slerp
 
+from simulator import paths
+
 from .helpers import REPO, unit, write_scenario
 
 
@@ -147,11 +149,12 @@ class ShotList(unittest.TestCase):
                 shotlist.plan(run, {**spec, "anchors": {"kill": {"event": "ship_destroyed", "ship": run.ships[0]}}}, REPO)
 
 
-@unittest.skipUnless((REPO / "output" / "incursion02" / "missiles.jsonl").exists(), "needs a finished incursion02 run in output/")
+@unittest.skipUnless((paths.run_dir("incursion02") / "missiles.jsonl").exists(),
+                     f"needs a run of incursion02 in {paths.run_dir('incursion02')}: python3 -m simulator run incursion02")
 class KillSequence(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.run_ = Run(REPO / "output" / "incursion02")
+        cls.run_ = Run(paths.run_dir("incursion02"))
         cls.plan = shotlist.plan(cls.run_, shotlist.load(shotlist.BUILTIN / "kill.yaml"), REPO, {"target": None})
         cls.killer = cls.plan["anchors"]["killer"]
 
@@ -174,11 +177,11 @@ class KillSequence(unittest.TestCase):
 
     def test_the_scenario_lists_resolve(self):
         # these files are edited by hand and the battle changes with the scenario, so only what must hold is checked
-        mine = shotlist.plan(self.run_, shotlist.load(REPO / "scenarios" / "incursion02.shots.yaml"), REPO)
+        mine = shotlist.plan(self.run_, shotlist.load(paths.shots_file("incursion02", "kill")), REPO)
         built_in = shotlist.plan(self.run_, shotlist.load(shotlist.BUILTIN / "kill.yaml"), REPO, {"target": "red_majestics-003"})
         self.assertEqual(mine["anchors"]["killer"]["missile"], built_in["anchors"]["killer"]["missile"])
         self.assertEqual(len(mine["shots"]), 3)
-        arrival = shotlist.plan(self.run_, shotlist.load(REPO / "scenarios" / "incursion02_arrival.shots.yaml"), REPO)
+        arrival = shotlist.plan(self.run_, shotlist.load(paths.shots_file("incursion02", "arrival")), REPO)
         self.assertLess(arrival["shots"][0]["times"][0], arrival["anchors"]["first"]["t"])      # opens before the first ship appears
 
     def test_a_ship_that_survived_stops_the_render(self):

@@ -9,6 +9,7 @@ from . import __version__
 from .navigation import guidance, orbits, safety
 from .physics.dynamics import FORWARD, gravity, normalize, quat_between, rotate, slew_toward
 from .physics.orbits import Ephemeris
+from .paths import code_hash
 from .units import G0
 from .doctrine.mission import MissionControl
 from .sensors.lightdelay import History, SensorNet
@@ -52,7 +53,7 @@ class Simulation:
     def _build_ships(self):
         cfg = self.cfg
         ids, fac, cls, grp, objs, offs, eng, bats = [], [], [], [], [], [], [], []
-        arrive = []
+        arrive, hold = [], []
         P, V, Q = [], [], []
         bp0, bv0 = self.eph.at(0.0)
         min_sep = cfg.nav["navigation"]["ship_separation"]["minimum_km"] * 1000.0
@@ -91,6 +92,7 @@ class Simulation:
                             if g.engagement and g.engagement["mode"] == "fire_at_will" else [])
                 offs.append(offs_g[k])
                 arrive.append((g.arrival["time_s"] + g.arrival["delays"][k], g.arrival["delays"][k]) if g.arrival else (np.nan, 0.0))
+                hold.append(g.arrival["time_s"] + g.arrival["delays"][k] + g.arrival["holds"][k] if g.arrival and g.arrival["holds"][k] > 0 else np.nan)
                 P.append(slot_pos[k]); V.append(np.array(slot_vel[k], float)); Q.append(quat_between(FORWARD, fwd_g[k]))
         self.ids, self.fac, self.cls, self.grp, self.objs = ids, fac, cls, grp, objs
         self.engage, self.batteries = eng, bats
@@ -124,6 +126,7 @@ class Simulation:
         # ships arriving from hyperspace: off the field (held at their arrival state, like a departed ship) until arrive_t
         self.arrive_t, self.arrive_delay = np.array(arrive, float).reshape(-1, 2).T.copy()
         self.pending = ~np.isnan(self.arrive_t)
+        self.hold_until = np.array(hold, float)       # an arrived ship drifts (no thrust, no steering) until then; nan: no hold
         self.departed[self.pending] = True
         self.star = next((k for k, b in enumerate(self.cfg.bodies) if b.type == "star" and b.parent is None), None)
         self.anchors = {}
@@ -448,6 +451,11 @@ class Simulation:
                 for i in range(nships):
                     if self.departed[i] or self.destroyed[i]:
                         continue                                   # departed: frozen; destroyed: ballistic hulk
+                    if not np.isnan(self.hold_until[i]):
+                        if t < self.hold_until[i] - 1e-9:
+                            continue                               # just out of hyperspace: drifting, drive not yet pushing
+                        self.hold_until[i] = np.nan
+                        self.emit(t, "under_way", self.ids[i], {"group": self.grp[i], "position_m": _r(self.P[i], 1), "velocity_m_s": _r(self.V[i], 3)})
                     a_cmd, mode, reason = self._navigate(i, t, bp, bv, self._others_for(i, t), grav[i])
                     while self.pending_adjust:
                         k, body, d = self.pending_adjust.pop(0)
@@ -661,6 +669,7 @@ class Simulation:
                        for g in cfg.groups if g.orbit or g.objective.get("orbit")],
             "objects": objects,
             "source_file_sha256": cfg.file_hashes,
+            "code_sha256": code_hash(),
             "warnings": cfg.warnings,
             "event_count": len(self.events),
             "missiles": dict(self.stats),

@@ -1,24 +1,28 @@
 # Cinematic renders (Blender)
 
-`python3 -m simulator render <run>` turns a finished run into a short film clip. It is a consumer of the run's output
-files; the simulator is not involved and nothing about the physics changes. This is a first spike: one orbiting camera,
-placeholder hulls, simple lighting.
+`python3 -m simulator render <scenario id>[/<shot list>]` turns a scenario's run into a film. It is a consumer of the
+run's output files; nothing about the physics changes. If there is no run yet, or the scenario, its data files or the
+simulator's code have changed since the stored one, the simulation is run first (`--no-run` uses the stored run as it
+is). Placeholder hulls, simple lighting.
 
 ```
-python3 -m simulator render output/incursion02                       # default: the first ship hit, from just before its first hit
-python3 -m simulator render output/incursion02 --target red_majestics-002 --t0 5650 --t1 5700 --speed 5
-python3 -m simulator render output/incursion02 --frames 30:40        # a quick look at ten frames
-python3 -m simulator render output/incursion02 --shot-only           # write shot.json, do not start Blender
+python3 -m simulator render incursion02                       # one orbit shot: the first ship hit, from just before its first hit
+python3 -m simulator render incursion02 --target red_majestics-002 --t0 5650 --t1 5700 --speed 5
+python3 -m simulator render incursion02 --frames 30:40        # a quick look at ten frames (40 is not included)
+python3 -m simulator render incursion02 --shot-only           # write shot.json, do not start Blender
 ```
 
 ### Shot lists
 
-A film of more than one shot is described in a shot list, a YAML file kept beside its scenario:
+A film of more than one shot is described in a shot list, a YAML file in its scenario's folder:
+`scenarios/<id>/shots/<film>.yaml`. The folder says which scenario it is a film of.
 
 ```
-python3 -m simulator render output/incursion02 --shots scenarios/incursion02.shots.yaml
-python3 -m simulator render output/incursion02 --shots scenarios/incursion02.shots.yaml --shot-only    # check it resolves; no Blender
-python3 -m simulator render output/incursion02 --sequence kill --target red_majestics-003             # the built-in list
+python3 -m simulator render incursion02/kill                       # scenarios/incursion02/shots/kill.yaml
+python3 -m simulator render incursion02/kill --profile preview     # the same film, small and quick (see film.profiles)
+python3 -m simulator render incursion02/kill --shot-only           # check it resolves; no Blender
+python3 -m simulator render incursion02 --sequence kill --target red_majestics-003      # the built-in list
+python3 -m simulator where                                         # lists every scenario and its shot lists
 ```
 
 `--sequence kill` uses the built-in list `simulator/render/sequences/kill.yaml` (launch, missile chase, destruction of
@@ -30,6 +34,8 @@ film:                                   # optional; command-line flags override 
   resolution: [1280, 720]
   ship_scale: 40
   watermark: /u/someone                 # text in the lower left corner of the film; empty or missing = none
+  profiles:                             # optional; --profile preview applies these on top of the settings above
+    preview: {fps: 12, resolution: [640, 360]}
 
 anchors:                                # named moments, found in the run's events
   kill:   {event: ship_destroyed, ship: red_majestics-003}
@@ -74,7 +80,7 @@ more fields, used as `name.field`:
 
 | camera | settings |
 |---|---|
-| `orbit` | `distance` in hull lengths (missile lengths when following a missile), `azimuth` and `elevation` in degrees. Azimuth is measured from the ship's nose, or from `relative_to` (a direction such as `killer.heading`): 0 looks back along it, 90 is side-on. `ease`: how a sweep is paced: `linear` (default), `in`, `out` (slows to a stop), `in_out` |
+| `orbit` | `distance` in hull lengths (missile lengths when following a missile), `azimuth` and `elevation` in degrees; each can be a pair `[from, to]` to move during the shot (a distance pair with fixed angles is a straight push in or pull back, and the stars stay still). Azimuth is measured from the ship's nose, or from `relative_to` (a direction such as `killer.heading`): 0 looks back along it, 90 is side-on. `ease`: how a sweep is paced: `linear` (default), `in`, `out` (slows to a stop), `in_out` |
 | `release` | starts as an orbit camera at `distance`, `azimuth`, `elevation` (moving with the subject), then over `settle` seconds of film (default 3) comes to rest in the system's frame and watches the subject go. A ship doing 1200 km/s is out of sight in a few seconds. Give it the pose the previous shot ended on and there is no visible cut |
 | `chase` | behind a missile, looking at its target: `back` and `lift` in missile lengths, `swing` in degrees around the line of flight |
 
@@ -90,8 +96,10 @@ look the same at any playback speed. A missile near the camera that moves little
 with a drive glow; a fast one as a streak. The missiles of a salvo share one position in the simulation, so their
 models are spread into a loose ring around it (cosmetic); a followed missile stays on its true position.
 
-Output goes to `<run>/render/<name>/`: `shot.json`, `frames/00000.png ...`, `<name>.mp4` (if ffmpeg is installed) and
-`scene.blend` (the first frame, to open and look around by hand). Needs `blender` on the PATH (tested with 5.0).
+Output goes to the working directory (`~/starshiptactics-work`, `$STARSHIP_WORK` or `--work`; see the README), never
+into the checkout: `renders/<id>/<film>[.<profile>]/` gets `shot.json`, `frames/00000.png ...` and `scene.blend` (the
+first frame, to open and look around by hand), and the film is `films/<id>_<film>[.<profile>].mp4` (if ffmpeg is
+installed). With `--frames a:b` only those frames are rendered and no film is built. Needs `blender` on the PATH (tested with 5.0).
 
 ### Rendering on a farm (SheepIt)
 
@@ -99,14 +107,14 @@ A film takes several seconds a frame here. A render farm will not run our script
 into one self-contained file it can render as a plain animation: every frame's pose as keyframes, textures packed inside.
 
 ```
-python3 -m simulator render output/incursion03 --shots scenarios/incursion03_arrival.shots.yaml --bake
-    -> output/incursion03/render/incursion03_arrival/incursion03_arrival.blend   (frames 1 to N; a few MB; takes seconds)
+python3 -m simulator render incursion03/arrival --bake
+    -> <work>/renders/incursion03/arrival/incursion03_arrival.blend   (frames 1 to N; a few MB; takes seconds)
 ```
 
 1. Upload that `.blend` as a new project. Engine Eevee, all frames (1 to N), the resolution and frame rate printed by
    `--bake`. Do not split frames into tiles or layers: the bloom and lens flare are applied to the whole picture.
 2. When it has finished, download the frames (a zip).
-3. `python3 -m simulator render output/incursion03 --shots scenarios/incursion03_arrival.shots.yaml --frames-from ~/Downloads/<the zip>`
+3. `python3 -m simulator render incursion03/arrival --frames-from ~/Downloads/<the zip>`
    copies the frames in (in name order), checks that none are missing, and writes the mp4 with the watermark.
 
 The baked file renders exactly what the script renders (checked pixel for pixel on three frames). It also renders
@@ -114,7 +122,9 @@ locally with no script: `blender -b <file>.blend -a`. Re-bake after any change t
 
 | option | meaning |
 |---|---|
-| `--shots` | a shot list file (the options below that set a window or camera apply to single shots only) |
+| `--profile` | a named set of film settings from the shot list (`film.profiles`), such as `preview`; it gets its own render folder and film |
+| `--no-run` | do not re-run the simulation, even if the stored run is out of date |
+| `--shots` | a shot list file kept somewhere else (the options below that set a window or camera apply to single shots only) |
 | `--target` | ship the camera follows |
 | `--t0`, `--t1` | window, in simulated seconds |
 | `--speed` | simulated seconds per second of film (default 15) |
@@ -175,14 +185,18 @@ The timings are in seconds of film (`arrival_build_s`, `arrival_emerge_s`, `arri
 the effect looks the same at any playback speed. Before it appears, the ship is placed where it would have been,
 coasting in. A shot may start up to a minute before the run begins, to lead into an arrival at T+0. To film one, anchor
 on the event: `arrive: {event: hyper_arrival, ship: red_majestics-002}`, then `follow: arrive.ship` and
-`start: arrive - 2.5` (`scenarios/incursion02_arrival.shots.yaml`). This is cosmetic: ring and sail sizes are set for
+`start: arrive - 2.5` (`scenarios/incursion02/shots/arrival.yaml`). This is cosmetic: ring and sail sizes are set for
 the look, in hull lengths, and nothing about them is simulated.
 
-**Impeller wedges.** Every live ship has a thin shell of violet and blue wisps around its hull (after
-`images/Capital Ship Through an Impeller Wedge.png`). The wisps slide aft, faster and brighter the harder the ship is
-accelerating (as a fraction of the hardest it accelerates in the run). After an arrival the wedge comes up as the sails
-thin out. It goes out when the ship is destroyed. `wedge=False` in `build_sequence` turns it off. Cosmetic: the shell is
-1.2 hull lengths long and 1.6 beams wide, not the books' kilometres-wide planes above and below the ship.
+**Impeller wedges.** Every live ship has two flat planes of violet and blue wisps, one above and one below the hull,
+far apart at the stern and closing toward the bow, and a fainter sidewall on either flank between them (pattern after
+`images/Capital Ship Through an Impeller Wedge.png`). A wedge that is up on a ship that is not accelerating shows at a third
+of full brightness (`wedge_idle` in `build_sequence`); the wisps slide aft faster, and brighten to full, the harder
+the ship accelerates (as a fraction of the hardest it accelerates in the run). A ship that holds after arriving
+(`hold_s` in the scenario) brightens over a second and a half as it gets under way. After an arrival the wedge comes up as the sails
+thin out. It goes out when the ship is destroyed. `wedge=False` in `build_sequence` turns it off. Cosmetic: the planes
+are 1.6 hull lengths long and four to six beams wide, not the books' kilometres-wide ones. The shape is the `WEDGE`
+table in `blender_scene.py`.
 
 **Destroyed ships** break into sections that drift apart and tumble, with a fireball at the moment of the kill. This is
 cosmetic: the simulator tracks one hulk, and the pieces ride on its path.
@@ -209,5 +223,5 @@ cosmetic: the simulator tracks one hulk, and the pieces ride on its path.
 Wanted for the kill sequence (noted from review, not started):
 
 - Missiles should leave from the broadside tubes, not appear outside the hull.
-- A camera orbit during the chase: the `swing` setting exists and `scenarios/incursion02.shots.yaml` uses it, but
+- A camera orbit during the chase: the `swing` setting exists and `scenarios/incursion02/shots/kill.yaml` uses it, but
   only three frames have been rendered with it.

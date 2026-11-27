@@ -103,7 +103,7 @@ def build(run_dir, out_dir, repo, target=None, t0=None, t1=None, speed=15.0, fps
 def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40.0, missile_scale=150.0, missile_length_m=15.0,
                    unit_m=1000.0, resolution=(1280, 720), lens_mm=35.0, flash_s=0.4, kill_flash_s=0.6, debris_cool_s=5.0,
                    n_sparks=80, debris_speed=1.0, debris_spin=1.0, engine="eevee", hero=None,
-                   arrival_build_s=2.0, arrival_emerge_s=0.8, arrival_sail_s=3.5, wedge=True):
+                   arrival_build_s=2.0, arrival_emerge_s=0.8, arrival_sail_s=3.5, wedge=True, wedge_idle=1.0 / 3.0):
     """Write <out_dir>/shot.json for a list of shot specs (see orbit_shot, chase_shot) and return the shot dict.
     flash_s, kill_flash_s and debris_cool_s are in seconds of film. hero: a missile (or several) drawn without the
     cosmetic spread that separates the missiles of a salvo."""
@@ -153,7 +153,8 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
             if any(-arrival_build_s <= a <= arrival_emerge_s + arrival_sail_s for a in age):
                 ships[-1]["arrive_film"] = age
         # impeller wedge: per frame, its brightness and how far its pattern has flowed. Up on every live ship; after an
-        # arrival it comes up as the sails thin out. The pattern flows faster the harder the ship accelerates.
+        # arrival it comes up as the sails thin out. A drive that is up but not pushing shows at wedge_idle of full
+        # brightness; it brightens, and its pattern flows faster, the harder the ship accelerates.
         if wedge:
             w, flow = [], 0.0
             for k, (a, fr) in enumerate(zip(st, F)):
@@ -163,7 +164,7 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
                     since = film_age(fr["shot"], fr["t"], run.arrive[s][0]) - arrival_emerge_s
                     up *= float(np.clip((since - 0.6 * arrival_sail_s) / (0.4 * arrival_sail_s + 0.5), 0.0, 1.0))
                 flow += (0.2 + 1.0 * push) / fps
-                w.append([round(up * (0.55 + 0.45 * push), 4), round(flow, 4)])
+                w.append([round(up * (wedge_idle + (1.0 - wedge_idle) * push), 4), round(flow, 4)])
             ships[-1]["wedge"] = w
 
     bodies, sun_dir = [], None
@@ -282,7 +283,8 @@ def build_sequence(run, out_dir, repo, shots, fps=24, target=None, ship_scale=40
             el0, el1 = rig["elevation_deg"] if isinstance(rig["elevation_deg"], (list, tuple)) else (rig["elevation_deg"],) * 2
             u = EASE[rig.get("ease", "linear")](k / max(m - 1, 1))
             az = math.atan2(ref[1], ref[0]) + math.radians(az0 + (az1 - az0) * u)
-            el, d = math.radians(el0 + (el1 - el0) * u), rig["dist"] * (hull_len(oid) if kind == "ship" else mlen)
+            d0, d1 = rig["dist"] if isinstance(rig["dist"], (list, tuple)) else (rig["dist"],) * 2
+            el, d = math.radians(el0 + (el1 - el0) * u), (d0 + (d1 - d0) * u) * (hull_len(oid) if kind == "ship" else mlen)
             rel = np.array([d * math.cos(el) * math.cos(az), d * math.cos(el) * math.sin(az), d * math.sin(el)])
             if rig["type"] == "orbit":
                 cams.append({"loc": rel.tolist(), "look": [0.0, 0.0, 0.0]})

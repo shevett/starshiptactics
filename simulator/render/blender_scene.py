@@ -259,8 +259,9 @@ def sail():
 
 
 def wedge():
-    """An impeller wedge: a thin shell of violet and blue light around the hull, in wisps that run along its length,
-    brightest where the shell is seen edge-on. Object property "flow" slides the wisps aft; colour alpha = brightness."""
+    """Material of an impeller wedge's planes and sidewalls (see wedge_mesh): violet and blue light in wisps that run
+    along the hull, a little brighter where a panel is seen edge-on. Object property "flow" slides the wisps aft; colour
+    alpha = brightness; the mesh's "gain" attribute fades each panel out at its edges and dims the sidewalls."""
     m = bpy.data.materials.new("wedge")
     m.use_nodes = True
     nt = m.node_tree
@@ -270,11 +271,13 @@ def wedge():
     out, em, clear, add = N("ShaderNodeOutputMaterial"), N("ShaderNodeEmission"), N("ShaderNodeBsdfTransparent"), N("ShaderNodeAddShader")
     tc, sep, info, lw, flow = N("ShaderNodeTexCoord"), N("ShaderNodeSeparateXYZ"), N("ShaderNodeObjectInfo"), N("ShaderNodeLayerWeight"), N("ShaderNodeAttribute")
     flow.attribute_type, flow.attribute_name = "OBJECT", "flow"
-    L(tc.outputs["Object"], sep.inputs[0])                   # the shell is a unit sphere in its own coordinates; x runs along the hull
+    gain = N("ShaderNodeAttribute")
+    gain.attribute_type, gain.attribute_name = "GEOMETRY", "gain"
+    L(tc.outputs["Object"], sep.inputs[0])                   # the panels' own coordinates, in hull lengths, beams and heights; x runs along the hull
     sx, sy, sz, vec = N("ShaderNodeMath", "MULTIPLY_ADD"), N("ShaderNodeMath", "MULTIPLY"), N("ShaderNodeMath", "MULTIPLY"), N("ShaderNodeCombineXYZ")
     L(sep.outputs["X"], sx.inputs[0]); sx.inputs[1].default_value = 1.4; L(flow.outputs["Fac"], sx.inputs[2])        # long along the hull, and sliding
-    L(sep.outputs["Y"], sy.inputs[0]); sy.inputs[1].default_value = 5.0
-    L(sep.outputs["Z"], sz.inputs[0]); sz.inputs[1].default_value = 5.0
+    L(sep.outputs["Y"], sy.inputs[0]); sy.inputs[1].default_value = 2.2
+    L(sep.outputs["Z"], sz.inputs[0]); sz.inputs[1].default_value = 2.2
     L(sx.outputs[0], vec.inputs["X"]); L(sy.outputs[0], vec.inputs["Y"]); L(sz.outputs[0], vec.inputs["Z"])
     wisp, hue, pat = N("ShaderNodeTexNoise"), N("ShaderNodeTexNoise"), N("ShaderNodeMapRange")
     for n, scale, detail, warp in ((wisp, 1.0, 5.0, 1.6), (hue, 0.45, 2.0, 0.6)):
@@ -290,13 +293,10 @@ def wedge():
     el.new(0.5).color = (0.12, 0.25, 1.0, 1.0)
     L(hue.outputs[0], tint.inputs["Fac"])
     lw.inputs["Blend"].default_value = 0.5
-    edge = N("ShaderNodeMath", "MULTIPLY_ADD")               # brighter toward the outline of the shell
-    L(lw.outputs["Facing"], edge.inputs[0]); edge.inputs[1].default_value, edge.inputs[2].default_value = 1.6, 0.12
-    ax, taper, ends = N("ShaderNodeMath", "ABSOLUTE"), N("ShaderNodeMath", "POWER"), N("ShaderNodeMath", "SUBTRACT")
-    L(sep.outputs["X"], ax.inputs[0]); L(ax.outputs[0], taper.inputs[0]); taper.inputs[1].default_value = 5.0
-    ends.inputs[0].default_value = 1.0; L(taper.outputs[0], ends.inputs[1])                                           # nothing at the two tips
+    edge = N("ShaderNodeMath", "MULTIPLY_ADD")               # brighter where a panel is seen edge-on
+    L(lw.outputs["Facing"], edge.inputs[0]); edge.inputs[1].default_value, edge.inputs[2].default_value = 0.9, 0.45
     last = pat.outputs[0]
-    for src in (edge.outputs[0], ends.outputs[0], info.outputs["Alpha"], 3.0):
+    for src in (edge.outputs[0], gain.outputs["Fac"], info.outputs["Alpha"], 3.0):
         mul = N("ShaderNodeMath", "MULTIPLY")
         L(last, mul.inputs[0])
         if isinstance(src, float):
@@ -313,6 +313,46 @@ def wedge():
         except Exception:
             pass
     return m
+
+
+# Shape of an impeller wedge, in hull lengths (x), beams (y) and heights (z). Two flat planes, one above and one below the
+# hull, inclined so they are far apart at one end and close at the other, and a sidewall on either flank between them.
+WEDGE = {"half_length": 0.8,                      # the planes run this far ahead of and behind the hull's centre
+         "stern": (3.0, 2.6), "bow": (2.0, 1.1),    # (half width, height above the centreline) of a plane at each end
+         "wall_length": 0.6, "wall_inset": 0.75, "wall_reach": 0.9, "wall_gain": 0.45}
+
+
+def wedge_mesh(name, mat, nu=28, nv=14):
+    """The four panels of a wedge as one mesh, nose along +x. Each vertex carries "gain": 1 in the middle of a panel,
+    falling to nothing at its edges, so no panel shows a hard outline."""
+    W = WEDGE
+    verts, faces, gains = [], [], []
+
+    def panel(point, base):
+        k = len(verts)
+        for i in range(nu + 1):
+            for j in range(nv + 1):
+                u, v = i / nu, 2.0 * j / nv - 1.0
+                verts.append(point(u, v))
+                gains.append(base * (1.0 - abs(2.0 * u - 1.0) ** 4) * (1.0 - abs(v) ** 4))
+        for i in range(nu):
+            for j in range(nv):
+                a = k + i * (nv + 1) + j
+                faces.append((a, a + nv + 1, a + nv + 2, a + 1))
+
+    def at(u, length):                           # u: 0 at the stern end, 1 at the bow end
+        x = (2.0 * u - 1.0) * length
+        f = (x / W["half_length"] + 1.0) / 2.0
+        return x, W["stern"][0] + (W["bow"][0] - W["stern"][0]) * f, W["stern"][1] + (W["bow"][1] - W["stern"][1]) * f
+
+    for sign in (1.0, -1.0):
+        panel(lambda u, v, s=sign: (at(u, W["half_length"])[0], v * at(u, W["half_length"])[1], s * at(u, W["half_length"])[2]), 1.0)
+        panel(lambda u, v, s=sign: (at(u, W["wall_length"])[0], s * W["wall_inset"] * at(u, W["wall_length"])[1],
+                                    v * W["wall_reach"] * at(u, W["wall_length"])[2]), W["wall_gain"])
+    ob = mesh_object(name, verts, faces, mat=mat, smooth=False)
+    attr = ob.data.attributes.new("gain", "FLOAT", "POINT")
+    attr.data.foreach_set("value", gains)
+    return ob
 
 
 def ember():
@@ -546,7 +586,8 @@ if any(s.get("arrive_film") for s, _, _ in ships):
             x.rotation_quaternion = NOSE
             x.visible_shadow = False
         arrivals.append((s, ob, fx))
-# impeller wedges: a shell around each hull (a child of it, sized in metres from the class's dimensions)
+# impeller wedges: planes above and below each hull and a sidewall on either flank (a child of the hull, sized in metres
+# from the class's dimensions)
 wedges = []
 if any(s.get("wedge") and any(w[0] > 0 for w in s["wedge"]) for s, _, _ in ships):
     wedge_mat = wedge()
@@ -554,9 +595,9 @@ if any(s.get("wedge") and any(w[0] > 0 for w in s["wedge"]) for s, _, _ in ships
         if not s.get("wedge") or not any(w[0] > 0 for w in s["wedge"]):
             continue
         d = shot["dims"][s["class"]]
-        sh = primitive("primitive_uv_sphere_add", s["id"] + ".wedge", wedge_mat, radius=1.0, segments=64, ring_count=32)
+        sh = wedge_mesh(s["id"] + ".wedge", wedge_mat)
         sh.parent, sh.visible_shadow = ob, False
-        sh.scale = (d["length"] * 0.6, d["beam"] * 0.8, d["height"] * 0.8)             # a little longer than the hull, about 1.6 times as wide
+        sh.scale = (d["length"], d["beam"], d["height"])
         sh["flow"] = 0.0
         wedges.append((s, sh))
 flash_light = []
